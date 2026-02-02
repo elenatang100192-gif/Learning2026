@@ -16,9 +16,18 @@ router.get('/', async (req, res) => {
   console.log('🎬 Videos API HIT! URL:', req.url);
   console.log('📋 Raw query:', req.query);
   console.log('📋 Parsed category:', req.query.category);
+  console.log('📋 Parsed status:', req.query.status);
 
   try {
     const { category, status = '已发布', page = 1, limit = 20 } = req.query;
+    
+    // 调试：打印所有查询参数
+    console.log('📋 查询参数:', {
+      category: category,
+      status: status,
+      page: page,
+      limit: limit
+    });
 
     console.log('🎬 Videos API HIT! URL:', req.url);
     console.log('📋 Raw query:', req.query);

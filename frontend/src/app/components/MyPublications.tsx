@@ -203,8 +203,10 @@ function PublicationCard({ publication }: { publication: Publication }) {
 
   const categoryLabels = {
     '科技': language === 'zh' ? '💻 科技' : '💻 ' + t.tech,
-    '艺术人文': language === 'zh' ? '🎨 艺术人文' : '🎨 ' + t.arts,
-    '商业业务': language === 'zh' ? '💼 商业业务' : '💼 ' + t.business,
+    '文化': language === 'zh' ? '🎨 文化' : '🎨 ' + t.arts,  // 修复：数据库中使用的是"文化"
+    '艺术人文': language === 'zh' ? '🎨 艺术人文' : '🎨 ' + t.arts,  // 保留兼容性
+    '商业': language === 'zh' ? '💼 商业' : '💼 ' + t.business,  // 修复：数据库中使用的是"商业"
+    '商业业务': language === 'zh' ? '💼 商业业务' : '💼 ' + t.business,  // 保留兼容性
   };
 
   // 状态映射：中文 -> 英文key

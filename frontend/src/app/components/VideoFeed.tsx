@@ -66,8 +66,10 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     // 转换分类
     const categoryMap: { [key: string]: 'Tech' | 'Culture' | 'Business' } = {
       '科技': 'Tech',
-      '艺术人文': 'Culture',
-      '商业业务': 'Business'
+      '文化': 'Culture',  // 修复：数据库中使用的是"文化"
+      '艺术人文': 'Culture',  // 保留兼容性
+      '商业': 'Business',
+      '商业业务': 'Business'  // 保留兼容性
     };
 
     // 根据语言选择作者名称
@@ -116,8 +118,8 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
         // 根据分类获取视频
         const categoryMap = {
           Tech: '科技',
-          Culture: '艺术人文',
-          Business: '商业业务'
+          Culture: '文化',  // 修复：数据库中使用的是"文化"而不是"艺术人文"
+          Business: '商业'
         };
 
         const categoryName = categoryMap[category];
@@ -135,18 +137,15 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
 
         // 根据语言过滤视频：
         // - 英文模式：只显示有videoUrlEn的视频
-        // - 中文模式：只显示有videoUrl且title包含中文字符的视频（排除只有英文视频但没有中文视频的）
+        // - 中文模式：只显示有videoUrl的视频
         const filteredVideos = language === 'en' 
           ? formattedVideos.filter(video => video.videoUrlEn && video.videoUrlEn.trim() !== '')
           : formattedVideos.filter(video => {
-              // 中文模式：必须有videoUrl，且title必须包含中文字符
-              // 使用正则表达式检查是否包含中文字符（包括中文标点）
-              const hasChinese = /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(video.title || '');
+              // 中文模式：必须有videoUrl
               return video.videoUrl && 
                      video.videoUrl.trim() !== '' && 
                      video.title && 
-                     video.title.trim() !== '' &&
-                     hasChinese; // 必须包含中文字符
+                     video.title.trim() !== '';
             });
 
         // 去重：根据视频ID去重，确保同一个视频只出现一次

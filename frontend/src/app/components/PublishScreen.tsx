@@ -110,8 +110,8 @@ function PublishForm({ user, onClose, onSubmit, setStep }: PublishFormProps) {
       const categoriesData = await categoryAPI.getAll();
       const categoryMap: { [key: string]: string } = {
         'Tech': '科技',
-        'Culture': '艺术人文',
-        'Business': '商业业务'
+        'Culture': '文化',  // 修复：数据库中使用的是"文化"
+        'Business': '商业'  // 修复：数据库中使用的是"商业"
       };
       const categoryName = categoryMap[category];
       const categoryData = categoriesData.find(cat => cat.nameCn === categoryName);

@@ -40,8 +40,10 @@ export function MyFavorites({ user, onBack }: MyFavoritesProps) {
     // 转换分类
     const categoryMap: { [key: string]: 'Tech' | 'Culture' | 'Business' } = {
       '科技': 'Tech',
-      '艺术人文': 'Culture',
-      '商业业务': 'Business'
+      '文化': 'Culture',  // 修复：数据库中使用的是"文化"
+      '艺术人文': 'Culture',  // 保留兼容性
+      '商业': 'Business',  // 修复：数据库中使用的是"商业"
+      '商业业务': 'Business'  // 保留兼容性
     };
 
     // 检查关注状态（如果有作者）
