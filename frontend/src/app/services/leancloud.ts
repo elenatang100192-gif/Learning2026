@@ -115,11 +115,15 @@ export const authAPI = {
         method: 'POST',
         body: JSON.stringify({ email })
       });
+      console.log('🔍 sendOTP API raw response:', response);
+      
+      // 确保返回所有字段
       return {
-        success: true,
+        success: response.success !== false, // 如果response.success是undefined，默认为true
         development: response.development,
         otp: response.otp,
-        note: response.note
+        note: response.note,
+        message: response.message
       };
     } catch (error: any) {
       console.error('发送OTP失败:', error);
@@ -148,6 +152,26 @@ export const authAPI = {
       return null;
     } catch (error) {
       console.error('邮箱登录失败:', error);
+      return null;
+    }
+  },
+
+  // 密码登录
+  loginWithPassword: async (email: string, password: string): Promise<User | null> => {
+    try {
+      const response = await apiRequest('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password, loginType: 'password' })
+      });
+
+      if (response.success && response.user) {
+        // 存储session token到localStorage
+        localStorage.setItem('sessionToken', response.sessionToken);
+        return response.user;
+      }
+      return null;
+    } catch (error) {
+      console.error('密码登录失败:', error);
       return null;
     }
   },

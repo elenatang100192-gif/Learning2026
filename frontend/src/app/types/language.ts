@@ -92,8 +92,8 @@ export const translations: Record<Language, Translations> = {
     business: '商业业务',
     
     // 登录页面
-    loginTitle: '知识视频平台',
-    loginSubtitle: 'Ashley Furniture 内部系统',
+    loginTitle: 'NexusMind Short Video',
+    loginSubtitle: 'Ashley Furniture Internal System',
     companyEmail: '公司邮箱',
     emailPlaceholder: 'user@example.com',
     sendCode: '发送验证码',
@@ -112,6 +112,11 @@ export const translations: Record<Language, Translations> = {
     loginError: '登录失败，请检查验证码',
     loginSuccess: '登录成功！',
     codeSent: '验证码已发送到您的邮箱',
+    password: '密码',
+    passwordPlaceholder: '请输入密码',
+    passwordLogin: '密码登录',
+    otpLogin: '验证码登录',
+    passwordError: '请输入密码',
     
     // 首页
     notifications: '通知',
@@ -170,7 +175,7 @@ export const translations: Record<Language, Translations> = {
     business: 'Business',
     
     // 登录页面
-    loginTitle: 'VidBrain AI Short Video Platform',
+    loginTitle: 'NexusMind Short Video',
     loginSubtitle: 'Ashley Furniture Internal System',
     companyEmail: 'Company Email',
     emailPlaceholder: 'user@example.com',
@@ -190,6 +195,11 @@ export const translations: Record<Language, Translations> = {
     loginError: 'Login failed, please check your code',
     loginSuccess: 'Login successful!',
     codeSent: 'Code sent to your email',
+    password: 'Password',
+    passwordPlaceholder: 'Enter your password',
+    passwordLogin: 'Password Login',
+    otpLogin: 'OTP Login',
+    passwordError: 'Please enter your password',
     
     // 首页
     notifications: 'Notifications',
