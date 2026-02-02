@@ -33,6 +33,15 @@ cleanup() {
 # 捕获退出信号
 trap cleanup SIGINT SIGTERM
 
+# 清理旧进程
+echo -e "${YELLOW}清理旧进程...${NC}"
+lsof -ti:3001 | xargs kill -9 2>/dev/null
+lsof -ti:5173 | xargs kill -9 2>/dev/null
+lsof -ti:5174 | xargs kill -9 2>/dev/null
+lsof -ti:5175 | xargs kill -9 2>/dev/null
+lsof -ti:5176 | xargs kill -9 2>/dev/null
+sleep 1
+
 # 1. 启动后端API
 echo -e "${GREEN}[1/3] 启动后端API服务器...${NC}"
 cd "$SCRIPT_DIR/admin API"
@@ -40,11 +49,11 @@ if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}后端API: 正在安装依赖...${NC}"
     npm install
 fi
-node server.js > "$LOG_DIR/api.log" 2>&1 &
+npm run dev > "$LOG_DIR/api.log" 2>&1 &
 API_PID=$!
 echo -e "${GREEN}后端API已启动 (PID: $API_PID, 端口: 3001)${NC}"
 echo -e "${BLUE}日志文件: $LOG_DIR/api.log${NC}"
-sleep 2
+sleep 3
 
 # 2. 启动前端
 echo ""
@@ -79,9 +88,9 @@ echo -e "${GREEN}✅ 所有服务已启动！${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 echo -e "${YELLOW}服务地址：${NC}"
-echo -e "  后端API:  http://localhost:3001"
-echo -e "  前端:     http://localhost:5173 或 http://localhost:5174"
-echo -e "  后台管理: http://localhost:5175 或 http://localhost:5176"
+echo -e "  后端API:     http://localhost:3001"
+echo -e "  前端刷视频:  http://localhost:5173/Video-frontend/"
+echo -e "  后台管理:    http://localhost:5175/Video-admin/"
 echo ""
 echo -e "${YELLOW}日志文件：${NC}"
 echo -e "  后端API:  $LOG_DIR/api.log"

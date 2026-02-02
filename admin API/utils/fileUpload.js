@@ -2,11 +2,20 @@
 const qiniu = require('qiniu');
 const db = require('./db');
 
-// 七牛云配置（从环境变量或默认值）
-const QINIU_URL = process.env.QINIU_URL || 'https://trainspace.ashgso.com';
-const QINIU_BUCKET = process.env.QINIU_BUCKET || 'trainspace';
-const QINIU_ACCESS_KEY = process.env.QINIU_ACCESS_KEY || 'LovYLFiZZuPFtvGLTjlCXe3l7YcJq3yEmsCOBpSU';
-const QINIU_SECRET_KEY = process.env.QINIU_SECRET_KEY || 'ISfANLfFxsgWn0cFlZD2jLlmEbBV4QSnjW5Y_55u';
+// 检查必需的环境变量
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`❌ 缺少必需的环境变量: ${name}。请在 .env 文件中设置此变量。`);
+  }
+  return value;
+}
+
+// 七牛云配置（必须从环境变量读取）
+const QINIU_URL = requireEnv('QINIU_URL');
+const QINIU_BUCKET = requireEnv('QINIU_BUCKET');
+const QINIU_ACCESS_KEY = requireEnv('QINIU_ACCESS_KEY');
+const QINIU_SECRET_KEY = requireEnv('QINIU_SECRET_KEY');
 
 const qiniuConfig = new qiniu.conf.Config();
 qiniuConfig.zone = qiniu.zone.Zone_z2; // 华南区域（根据错误提示，bucket trainspace在z2区域）

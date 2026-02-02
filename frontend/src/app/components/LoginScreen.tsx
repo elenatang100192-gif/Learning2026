@@ -111,23 +111,23 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
     }
 
     if (loginType === 'otp') {
-      if (otp.length !== 6) {
+    if (otp.length !== 6) {
         setError(displayT.codeError);
-        setIsLoading(false);
-        return;
-      }
+      setIsLoading(false);
+      return;
+    }
 
-      try {
-        const user = await authAPI.loginWithEmail(email, otp);
-        if (user) {
-          setLanguage(selectedLanguage);
-          localStorage.setItem('preferredLanguage', selectedLanguage);
+    try {
+      const user = await authAPI.loginWithEmail(email, otp);
+      if (user) {
+        setLanguage(selectedLanguage);
+        localStorage.setItem('preferredLanguage', selectedLanguage);
           toast.success(displayT.loginSuccess || 'Login successful!');
-          onLogin(user.email);
-        } else {
+        onLogin(user.email);
+      } else {
           setError(displayT.loginError || 'Login failed, please check your code');
-        }
-      } catch (error) {
+      }
+    } catch (error) {
         console.error('Login failed:', error);
         setError(displayT.loginError || 'Login failed, please check your code');
       } finally {
@@ -153,8 +153,8 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       } catch (error: any) {
         console.error('Password login failed:', error);
         setError(error?.message || displayT.loginError || 'Login failed, please check your password');
-      } finally {
-        setIsLoading(false);
+    } finally {
+      setIsLoading(false);
       }
     }
   };
@@ -203,121 +203,121 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           </TabsList>
 
           <TabsContent value="otp">
-            {step === 'email' ? (
+        {step === 'email' ? (
               <form onSubmit={(e) => { e.preventDefault(); handleSendOTP(); }} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                     {displayT.companyEmail}
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                     placeholder={displayT.emailPlaceholder}
-                    className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent text-white placeholder-gray-500 transition-all"
-                    required
-                  />
-                </div>
+                className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent text-white placeholder-gray-500 transition-all"
+                required
+              />
+            </div>
 
-                {error && (
-                  <div className="bg-red-900/30 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
-                    {error}
-                  </div>
-                )}
+            {error && (
+              <div className="bg-red-900/30 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
+                {error}
+              </div>
+            )}
 
-                <button
-                  type="submit"
+            <button
+              type="submit"
                   disabled={isSendingOTP}
-                  className="w-full bg-gradient-to-r from-orange-600 via-orange-500 to-orange-600 text-white py-3 rounded-lg font-medium hover:shadow-lg hover:shadow-orange-500/30 transition-all transform hover:scale-[1.02] active:scale-[0.98] bg-[length:200%_100%] hover:bg-right disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                >
+              className="w-full bg-gradient-to-r from-orange-600 via-orange-500 to-orange-600 text-white py-3 rounded-lg font-medium hover:shadow-lg hover:shadow-orange-500/30 transition-all transform hover:scale-[1.02] active:scale-[0.98] bg-[length:200%_100%] hover:bg-right disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            >
                   {isSendingOTP ? (displayT.sending || 'Sending...') : displayT.sendCode}
-                </button>
+            </button>
 
-                <p className="text-xs text-gray-500 text-center mt-4">
+            <p className="text-xs text-gray-500 text-center mt-4">
                   {displayT.codeExpiry}
-                </p>
-              </form>
-            ) : (
+            </p>
+          </form>
+        ) : (
               <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                     {displayT.verificationCode}
-                  </label>
-                  <p className="text-sm text-gray-400 mb-3">
+              </label>
+              <p className="text-sm text-gray-400 mb-3">
                     {displayT.sentTo} {email}
-                  </p>
-                  <input
-                    type="text"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              </p>
+              <input
+                type="text"
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     placeholder={displayT.enterCode}
-                    className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent text-center text-2xl tracking-widest font-mono text-white placeholder-gray-600 transition-all"
-                    maxLength={6}
-                    required
-                  />
-                </div>
+                className="w-full px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/50 focus:border-transparent text-center text-2xl tracking-widest font-mono text-white placeholder-gray-600 transition-all"
+                maxLength={6}
+                required
+              />
+            </div>
 
                 {/* Language Selection */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                     Select Language
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedLanguage('zh')}
-                      className={`px-4 py-3 rounded-lg border-2 transition-all ${
-                        selectedLanguage === 'zh'
-                          ? 'bg-orange-500/20 border-orange-500 text-orange-400'
-                          : 'bg-zinc-800/50 border-zinc-700 text-gray-300 hover:border-zinc-600'
-                      }`}
-                    >
-                      <div className="font-semibold">中文</div>
-                      <div className="text-xs text-gray-400 mt-1">Chinese</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedLanguage('en')}
-                      className={`px-4 py-3 rounded-lg border-2 transition-all ${
-                        selectedLanguage === 'en'
-                          ? 'bg-orange-500/20 border-orange-500 text-orange-400'
-                          : 'bg-zinc-800/50 border-zinc-700 text-gray-300 hover:border-zinc-600'
-                      }`}
-                    >
-                      <div className="font-semibold">English</div>
-                      <div className="text-xs text-gray-400 mt-1">英文</div>
-                    </button>
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="bg-red-900/30 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isLoading || otp.length !== 6}
-                  className="w-full bg-gradient-to-r from-orange-600 via-orange-500 to-orange-600 text-white py-3 rounded-lg font-medium hover:shadow-lg hover:shadow-orange-500/30 transition-all transform hover:scale-[1.02] active:scale-[0.98] bg-[length:200%_100%] hover:bg-right disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                >
-                  {isLoading ? (displayT.loggingIn || 'Logging in...') : displayT.login}
-                </button>
-
+              </label>
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => {
-                    setStep('email');
-                    setOtp('');
-                    setOtpSent(false);
-                    setError('');
-                  }}
-                  className="w-full text-gray-400 py-2 text-sm hover:text-orange-400 transition-colors"
+                  onClick={() => setSelectedLanguage('zh')}
+                  className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                    selectedLanguage === 'zh'
+                      ? 'bg-orange-500/20 border-orange-500 text-orange-400'
+                      : 'bg-zinc-800/50 border-zinc-700 text-gray-300 hover:border-zinc-600'
+                  }`}
                 >
-                  {displayT.backToEmail}
+                  <div className="font-semibold">中文</div>
+                  <div className="text-xs text-gray-400 mt-1">Chinese</div>
                 </button>
-              </form>
+                <button
+                  type="button"
+                  onClick={() => setSelectedLanguage('en')}
+                  className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                    selectedLanguage === 'en'
+                      ? 'bg-orange-500/20 border-orange-500 text-orange-400'
+                      : 'bg-zinc-800/50 border-zinc-700 text-gray-300 hover:border-zinc-600'
+                  }`}
+                >
+                  <div className="font-semibold">English</div>
+                  <div className="text-xs text-gray-400 mt-1">英文</div>
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="bg-red-900/30 border border-red-500/50 text-red-400 px-4 py-3 rounded-lg text-sm backdrop-blur-sm">
+                {error}
+              </div>
             )}
+
+            <button
+              type="submit"
+                  disabled={isLoading || otp.length !== 6}
+              className="w-full bg-gradient-to-r from-orange-600 via-orange-500 to-orange-600 text-white py-3 rounded-lg font-medium hover:shadow-lg hover:shadow-orange-500/30 transition-all transform hover:scale-[1.02] active:scale-[0.98] bg-[length:200%_100%] hover:bg-right disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+            >
+                  {isLoading ? (displayT.loggingIn || 'Logging in...') : displayT.login}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setStep('email');
+                setOtp('');
+                    setOtpSent(false);
+                setError('');
+              }}
+              className="w-full text-gray-400 py-2 text-sm hover:text-orange-400 transition-colors"
+            >
+                  {displayT.backToEmail}
+            </button>
+          </form>
+        )}
           </TabsContent>
 
           <TabsContent value="password">

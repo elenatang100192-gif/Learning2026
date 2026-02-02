@@ -55,7 +55,7 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
       });
       
       clearTimeout(timeoutId);
-      
+
       // 读取响应文本（只能读取一次）
       const responseText = await response.text();
       let responseData: any;
@@ -1003,11 +1003,11 @@ export const userAPI = {
     } catch (error) {
       console.error('获取用户统计失败:', error);
       // 如果失败，返回默认值
-      return {
-        totalUsers: 0,
-        newUsersToday: 0,
-        activeUsers: 0
-      };
+    return {
+      totalUsers: 0,
+      newUsersToday: 0,
+      activeUsers: 0
+    };
     }
   },
 

@@ -268,36 +268,36 @@ router.post('/login', [
         });
       }
 
-      // 验证OTP
-      const cachedOTP = otpCache.get(email);
+    // 验证OTP
+    const cachedOTP = otpCache.get(email);
 
-      if (!cachedOTP) {
-        return res.status(401).json({
-          success: false,
+    if (!cachedOTP) {
+      return res.status(401).json({
+        success: false,
           message: 'OTP not found or expired. Please request a new one.'
-        });
-      }
+      });
+    }
 
-      // 检查OTP是否过期
-      const now = Date.now();
-      if (now > cachedOTP.expiresAt) {
-        otpCache.delete(email);
-        return res.status(401).json({
-          success: false,
-          message: 'OTP has expired. Please request a new one.'
-        });
-      }
-
-      // 验证OTP是否正确
-      if (cachedOTP.otp !== otp) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid OTP code. Please check your code and try again.'
-        });
-      }
-
-      // OTP验证成功，清除缓存
+    // 检查OTP是否过期
+    const now = Date.now();
+    if (now > cachedOTP.expiresAt) {
       otpCache.delete(email);
+      return res.status(401).json({
+        success: false,
+        message: 'OTP has expired. Please request a new one.'
+      });
+    }
+
+    // 验证OTP是否正确
+    if (cachedOTP.otp !== otp) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid OTP code. Please check your code and try again.'
+      });
+    }
+
+    // OTP验证成功，清除缓存
+    otpCache.delete(email);
     }
 
     // 生成session token (包含用户ID以便后续验证)

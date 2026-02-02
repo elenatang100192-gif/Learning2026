@@ -1,12 +1,21 @@
 const mysql = require('mysql2/promise');
 
-// MySQL数据库配置
+// 检查必需的环境变量
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`❌ 缺少必需的环境变量: ${name}。请在 .env 文件中设置此变量。`);
+  }
+  return value;
+}
+
+// MySQL数据库配置（必须从环境变量读取）
 const DB_CONFIG = {
-  host: process.env.DB_HOSTNAME || '116.6.239.70',
-  port: process.env.DB_PORT || 20010,
-  user: process.env.DB_USERNAME || 'u_nexusmind',
-  password: process.env.DB_PASSWORD || '93fqCjBvyUDg',
-  database: process.env.DB_DATABASE || 'nexusmind',
+  host: requireEnv('DB_HOSTNAME'),
+  port: parseInt(process.env.DB_PORT || '3306', 10),
+  user: requireEnv('DB_USERNAME'),
+  password: requireEnv('DB_PASSWORD'),
+  database: requireEnv('DB_DATABASE'),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,

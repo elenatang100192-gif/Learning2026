@@ -9,7 +9,7 @@
     ↓                                           ↓
     ↓                                           ↓
 浏览器                                     Express API
-                                         ↓
+                                              ↓
                                          MySQL数据库
                                               ↓
                                          MySQL + OSS文件存储

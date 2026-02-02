@@ -128,15 +128,20 @@ if (OPENAI_ENDPOINT && OPENAI_DEPLOYMENT_NAME && !OPENAI_ENDPOINT.includes('your
 // const DOUBAO_TTS_API_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
 // const DOUBAO_TTS_RESOURCE_ID = process.env.DOUBAO_TTS_RESOURCE_ID || 'seed-tts-1.0';
 
-// 七牛云存储配置
-const QINIU_URL = process.env.QINIU_URL || 'https://trainspace.ashgso.com';
-const QINIU_BUCKET = process.env.QINIU_BUCKET || 'trainspace';
-const QINIU_ACCESS_KEY = process.env.QINIU_ACCESS_KEY || 'LovYLFiZZuPFtvGLTjlCXe3l7YcJq3yEmsCOBpSU';
-const QINIU_SECRET_KEY = process.env.QINIU_SECRET_KEY || 'ISfANLfFxsgWn0cFlZD2jLlmEbBV4QSnjW5Y_55u';
-
-if (!QINIU_ACCESS_KEY || !QINIU_SECRET_KEY) {
-  console.error('❌ 警告：七牛云AccessKey未配置，请设置QINIU_ACCESS_KEY和QINIU_SECRET_KEY环境变量');
+// 检查必需的环境变量
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`❌ 缺少必需的环境变量: ${name}。请在 .env 文件中设置此变量。`);
+  }
+  return value;
 }
+
+// 七牛云存储配置（必须从环境变量读取）
+const QINIU_URL = requireEnv('QINIU_URL');
+const QINIU_BUCKET = requireEnv('QINIU_BUCKET');
+const QINIU_ACCESS_KEY = requireEnv('QINIU_ACCESS_KEY');
+const QINIU_SECRET_KEY = requireEnv('QINIU_SECRET_KEY');
 
 // 初始化七牛云配置
 const qiniuConfig = new qiniu.conf.Config();

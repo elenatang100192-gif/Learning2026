@@ -6,6 +6,8 @@
     "init:db": "node scripts/init-database.js",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:admin": "cd admin && npm run dev",
+    "dev:api": "cd \"admin API\" && npm run dev",
+    "start": "bash start-all.sh",
     "install:all": "npm install && cd frontend && npm install && cd ../admin && npm install",
     "build:frontend": "cd frontend && npm run build",
     "build:admin": "cd admin && npm run build"
