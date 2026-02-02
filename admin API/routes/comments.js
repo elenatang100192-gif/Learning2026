@@ -1,6 +1,6 @@
 const express = require('express');
 const { query, validationResult } = require('express-validator');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ const authenticateUser = async (req, res, next) => {
       const userId = tokenParts.slice(4).join('-');
 
       try {
-        const user = await new AV.Query(AV.User).get(userId);
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -58,10 +58,11 @@ router.get('/:videoId/count', async (req, res) => {
   try {
     const { videoId } = req.params;
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Comment');
-    query.equalTo('video', videoPointer);
-    const count = await query.count();
+    const result = await db.query(
+      'SELECT COUNT(*) as count FROM Comment WHERE videoId = ?',
+      [videoId]
+    );
+    const count = result[0]?.count || 0;
 
     res.json({
       success: true,
@@ -95,36 +96,33 @@ router.get('/:videoId', [
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Comment');
-    query.equalTo('video', videoPointer);
-    query.include('user');
-    query.descending('createdAt');
-    query.limit(limit);
-    query.skip((page - 1) * limit);
+    const sql = `
+      SELECT c.*, u.username, u.email, u.createdAt as user_createdAt, u.canPublish, u.canComment
+      FROM Comment c
+      LEFT JOIN User u ON c.userId = u.id
+      WHERE c.videoId = ?
+      ORDER BY c.createdAt DESC
+      LIMIT ? OFFSET ?
+    `;
+    const comments = await db.query(sql, [videoId, limit, (page - 1) * limit]);
 
-    const comments = await query.find();
-
-    const commentData = comments.map(comment => {
-      const user = comment.get('user');
-      return {
-        id: comment.id,
-        content: comment.get('content'),
-        user: {
-          id: user.id,
-          username: user.get('username'),
-          email: user.get('email'),
-          avatar: user.get('avatar'),
-          joinDate: user.createdAt.toISOString().split('T')[0],
-          totalVideos: user.get('totalVideos') || 0,
-          totalViews: user.get('totalViews') || 0,
-          canPublish: user.get('canPublish') !== false,
-          canComment: user.get('canComment') !== false
-        },
-        createdAt: comment.createdAt.toISOString(),
-        updatedAt: comment.updatedAt.toISOString()
-      };
-    });
+    const commentData = comments.map(comment => ({
+      id: comment.id,
+      content: comment.content,
+      user: {
+        id: comment.userId,
+        username: comment.username,
+        email: comment.email,
+        avatar: null,
+        joinDate: comment.user_createdAt ? new Date(comment.user_createdAt).toISOString().split('T')[0] : null,
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: comment.canPublish !== 0,
+        canComment: comment.canComment !== 0
+      },
+      createdAt: comment.createdAt ? new Date(comment.createdAt).toISOString() : null,
+      updatedAt: comment.updatedAt ? new Date(comment.updatedAt).toISOString() : null
+    }));
 
     res.json({
       success: true,
@@ -154,8 +152,8 @@ router.post('/:videoId', authenticateUser, async (req, res) => {
     }
 
     // 检查用户是否有评论权限
-    const canComment = currentUser.get('canComment');
-    if (canComment === false) {
+    const canComment = currentUser.canComment;
+    if (canComment === 0 || canComment === false) {
       return res.status(403).json({
         success: false,
         message: 'You do not have permission to comment'
@@ -169,32 +167,44 @@ router.post('/:videoId', authenticateUser, async (req, res) => {
       });
     }
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const CommentClass = AV.Object.extend('Comment');
-    const comment = new CommentClass();
+    // 验证视频是否存在
+    const video = await db.findOne('SELECT id FROM Video WHERE id = ?', [videoId]);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
 
-    comment.set('content', content.trim());
-    comment.set('user', currentUser);
-    comment.set('video', videoPointer);
+    const commentId = await db.insert('Comment', {
+      videoId: parseInt(videoId),
+      userId: currentUser.id,
+      content: content.trim(),
+      parentId: null,
+      likeCount: 0
+    });
 
-    const savedComment = await comment.save();
+    const savedComment = await db.findOne(
+      'SELECT * FROM Comment WHERE id = ?',
+      [commentId]
+    );
 
     const commentData = {
       id: savedComment.id,
-      content: savedComment.get('content'),
+      content: savedComment.content,
       user: {
         id: currentUser.id,
-        username: currentUser.get('username'),
-        email: currentUser.get('email'),
-        avatar: currentUser.get('avatar'),
-        joinDate: currentUser.createdAt.toISOString().split('T')[0],
-        totalVideos: currentUser.get('totalVideos') || 0,
-        totalViews: currentUser.get('totalViews') || 0,
-        canPublish: currentUser.get('canPublish') !== false,
-        canComment: currentUser.get('canComment') !== false
+        username: currentUser.username,
+        email: currentUser.email,
+        avatar: null,
+        joinDate: currentUser.createdAt ? new Date(currentUser.createdAt).toISOString().split('T')[0] : null,
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: currentUser.canPublish !== 0,
+        canComment: currentUser.canComment !== 0
       },
-      createdAt: savedComment.createdAt.toISOString(),
-      updatedAt: savedComment.updatedAt.toISOString()
+      createdAt: savedComment.createdAt ? new Date(savedComment.createdAt).toISOString() : null,
+      updatedAt: savedComment.updatedAt ? new Date(savedComment.updatedAt).toISOString() : null
     };
 
     res.json({
@@ -211,4 +221,3 @@ router.post('/:videoId', authenticateUser, async (req, res) => {
 });
 
 module.exports = router;
-

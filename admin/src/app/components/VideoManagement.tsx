@@ -10,7 +10,7 @@ import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Skeleton } from './ui/skeleton';
-import { Search, Play, Eye, ThumbsUp, Clock, CheckCircle, XCircle, Ban, Upload, Power, FileVideo, Image as ImageIcon, RefreshCw, Trash2, Edit, ArrowUpDown } from 'lucide-react';
+import { Search, Play, Eye, ThumbsUp, Clock, CheckCircle, XCircle, Ban, Upload, Power, FileVideo, Image as ImageIcon, RefreshCw, Trash2, Edit, ArrowUpDown, Download } from 'lucide-react';
 import { Progress } from './ui/progress';
 import { toast } from 'sonner';
 import { videoAPI, categoryAPI, bookAPI, type Video, type Category } from '../services/leancloud';
@@ -33,6 +33,7 @@ export function VideoManagement() {
   const [isEditOrderDialogOpen, setIsEditOrderDialogOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<number>(0);
   const [activeTab, setActiveTab] = useState('all');
+  const [videoPlayUrls, setVideoPlayUrls] = useState<Record<string, string>>({});
   
   // 后台发布表单状态
   const [publishFormData, setPublishFormData] = useState({
@@ -54,6 +55,40 @@ export function VideoManagement() {
   useEffect(() => {
     loadData();
   }, [currentPage, searchTerm, activeTab]);
+
+  // 当视频列表加载后，预加载视频播放URL
+  useEffect(() => {
+    const loadVideoUrls = async () => {
+      const urls: Record<string, string> = {};
+      for (const video of videos) {
+        if (video.id && (video.videoUrl || video.videoUrlEn)) {
+          try {
+            const lang = video.videoUrlEn ? 'en' : 'zh';
+            const playUrl = await videoAPI.getPlayUrl(video.id, lang);
+            if (playUrl) {
+              urls[`${video.id}-review`] = playUrl;
+              urls[`${video.id}-play`] = playUrl;
+            } else {
+              // 如果获取签名URL失败，使用代理URL
+              urls[`${video.id}-review`] = videoAPI.getProxyUrl(video.id, lang);
+              urls[`${video.id}-play`] = videoAPI.getProxyUrl(video.id, lang);
+            }
+          } catch (error) {
+            console.error(`获取视频 ${video.id} 播放URL失败:`, error);
+            // 使用代理URL作为后备
+            const lang = video.videoUrlEn ? 'en' : 'zh';
+            urls[`${video.id}-review`] = videoAPI.getProxyUrl(video.id, lang);
+            urls[`${video.id}-play`] = videoAPI.getProxyUrl(video.id, lang);
+          }
+        }
+      }
+      setVideoPlayUrls(urls);
+    };
+
+    if (videos.length > 0) {
+      loadVideoUrls();
+    }
+  }, [videos]);
 
   // 自动刷新机制：在"待审核"标签页每5秒自动刷新一次
   // 注意：当审核对话框打开时，暂停自动刷新，避免关闭对话框
@@ -803,8 +838,13 @@ export function VideoManagement() {
                                 <video
                                   controls
                                   className="w-full h-full"
-                                  src={video.videoUrlEn || video.videoUrl}
+                                  src={videoPlayUrls[`${video.id}-review`] || videoAPI.getProxyUrl(video.id, video.videoUrlEn ? 'en' : 'zh')}
                                   poster={video.coverUrl}
+                                  onError={(e) => {
+                                    console.error('视频加载失败，尝试使用原始URL:', e);
+                                    const videoElement = e.target as HTMLVideoElement;
+                                    videoElement.src = video.videoUrlEn || video.videoUrl || '';
+                                  }}
                                 >
                                   Your browser does not support video playback.
                                 </video>
@@ -896,11 +936,36 @@ export function VideoManagement() {
                                   <video
                                     controls
                                     className="w-full h-full"
-                                    src={video.videoUrlEn || video.videoUrl}
+                                    src={videoPlayUrls[`${video.id}-play`] || videoAPI.getProxyUrl(video.id, video.videoUrlEn ? 'en' : 'zh')}
                                     poster={video.coverUrl}
+                                    onError={(e) => {
+                                      console.error('视频加载失败，尝试使用原始URL:', e);
+                                      // 如果代理URL失败，尝试使用原始URL
+                                      const videoElement = e.target as HTMLVideoElement;
+                                      videoElement.src = video.videoUrlEn || video.videoUrl || '';
+                                    }}
                                   >
                                     Your browser does not support video playback.
                                   </video>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                      const proxyUrl = videoAPI.getProxyUrl(video.id, video.videoUrlEn ? 'en' : 'zh');
+                                      const link = document.createElement('a');
+                                      link.href = proxyUrl;
+                                      link.download = `${video.title || 'video'}.mp4`;
+                                      link.target = '_blank';
+                                      document.body.appendChild(link);
+                                      link.click();
+                                      document.body.removeChild(link);
+                                    }}
+                                    className="flex-1"
+                                  >
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Download Video
+                                  </Button>
                                 </div>
                                 <div className="grid grid-cols-3 gap-4 p-4 bg-muted rounded-lg">
                                   <div>

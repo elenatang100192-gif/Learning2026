@@ -139,9 +139,9 @@ export function BookManagement() {
         errorMessage = '无法连接到服务器，请检查网络连接或确保后端服务正在运行';
       }
       
-      // 检查是否是LeanCloud权限错误
+      // 检查是否是权限错误
       if (error?.code === 1 || error?.message?.includes('permission') || error?.message?.includes('权限')) {
-        errorMessage = '权限不足，请检查LeanCloud配置或联系管理员';
+        errorMessage = '权限不足，请联系管理员';
       }
       
       toast.error(errorMessage);
@@ -2137,9 +2137,9 @@ export function BookManagement() {
                                     throw new Error('生成英文音频失败：未返回有效的音频URL');
                                   }
                                   
-                                  // 直接使用API返回的audioUrl（这是LeanCloud的URL）
+                                  // 直接使用API返回的audioUrl（OSS URL）
                                   finalAudioUrl = audioResult.audioUrl;
-                                  console.log('✅ 英文音频生成成功，LeanCloud URL:', finalAudioUrl);
+                                  console.log('✅ 英文音频生成成功，OSS URL:', finalAudioUrl);
                                   
                                   // 更新本地content对象
                                   content.audioUrlEn = finalAudioUrl;

@@ -27,8 +27,10 @@ export function UserManagement() {
   const [newUserData, setNewUserData] = useState({
     email: '',
     username: '',
+    password: '',
     canPublish: true,
-    canComment: true
+    canComment: true,
+    canAdmin: false
   });
 
   // 修改权限对话框状态
@@ -36,7 +38,9 @@ export function UserManagement() {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [permissions, setPermissions] = useState({
     canPublish: true,
-    canComment: true
+    canComment: true,
+    canAdmin: false,
+    password: ''
   });
   const [updatingPermissions, setUpdatingPermissions] = useState(false);
 
@@ -75,12 +79,19 @@ export function UserManagement() {
     try {
       setCreatingUser(true);
       // 如果username为空字符串，则不发送该字段
-      const userDataToSend = {
+      const userDataToSend: any = {
         email: newUserData.email.trim(),
         ...(newUserData.username?.trim() ? { username: newUserData.username.trim() } : {}),
         canPublish: newUserData.canPublish,
-        canComment: newUserData.canComment
+        canComment: newUserData.canComment,
+        canAdmin: newUserData.canAdmin
       };
+      
+      // 如果设置了密码，则包含密码
+      if (newUserData.password.trim()) {
+        userDataToSend.password = newUserData.password.trim();
+      }
+      
       await userAPI.createUser(userDataToSend);
 
       toast.success('User created successfully!');
@@ -89,8 +100,10 @@ export function UserManagement() {
       setNewUserData({
         email: '',
         username: '',
+        password: '',
         canPublish: true,
-        canComment: true
+        canComment: true,
+        canAdmin: false
       });
 
       // 关闭对话框
@@ -111,7 +124,9 @@ export function UserManagement() {
     setEditingUser(user);
     setPermissions({
       canPublish: user.canPublish !== false,
-      canComment: user.canComment !== false
+      canComment: user.canComment !== false,
+      canAdmin: (user as any).canAdmin !== false,
+      password: ''
     });
     setEditPermissionsDialogOpen(true);
   };
@@ -122,11 +137,28 @@ export function UserManagement() {
 
     try {
       setUpdatingPermissions(true);
-      await userAPI.updatePermissions(editingUser.id, permissions);
+      const permissionsToUpdate: any = {
+        canPublish: permissions.canPublish,
+        canComment: permissions.canComment,
+        canAdmin: permissions.canAdmin
+      };
+      
+      // 如果设置了新密码，则包含密码
+      if (permissions.password.trim()) {
+        permissionsToUpdate.password = permissions.password.trim();
+      }
+      
+      await userAPI.updatePermissions(editingUser.id, permissionsToUpdate);
 
       toast.success('User permissions updated successfully!');
       setEditPermissionsDialogOpen(false);
       setEditingUser(null);
+      setPermissions({
+        canPublish: true,
+        canComment: true,
+        canAdmin: false,
+        password: ''
+      });
       loadData();
     } catch (error) {
       console.error('修改用户权限失败:', error);
@@ -231,6 +263,19 @@ export function UserManagement() {
                   />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="password" className="text-right">
+                    Password
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Optional, leave empty for OTP login only"
+                    value={newUserData.password}
+                    onChange={(e) => setNewUserData(prev => ({ ...prev, password: e.target.value }))}
+                    className="col-span-3"
+                  />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
                   <Label className="text-right">Permissions</Label>
                   <div className="col-span-3 space-y-2">
                     <div className="flex items-center space-x-2">
@@ -252,6 +297,19 @@ export function UserManagement() {
                         }
                       />
                       <Label htmlFor="canComment" className="text-sm">Allow to comment</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="canAdmin"
+                        checked={newUserData.canAdmin}
+                        onCheckedChange={(checked) =>
+                          setNewUserData(prev => ({ ...prev, canAdmin: checked as boolean }))
+                        }
+                      />
+                      <Label htmlFor="canAdmin" className="text-sm flex items-center gap-1">
+                        <Shield className="h-3 w-3" />
+                        Allow to access admin panel
+                      </Label>
                     </div>
                   </div>
                 </div>
@@ -289,6 +347,19 @@ export function UserManagement() {
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="editPassword" className="text-right">
+                New Password
+              </Label>
+              <Input
+                id="editPassword"
+                type="password"
+                placeholder="Leave empty to keep current password"
+                value={permissions.password}
+                onChange={(e) => setPermissions(prev => ({ ...prev, password: e.target.value }))}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
               <Label className="text-right">Permissions</Label>
               <div className="col-span-3 space-y-3">
                 <div className="flex items-center space-x-2">
@@ -313,6 +384,19 @@ export function UserManagement() {
                   />
                   <Label htmlFor="editCanComment" className="text-sm font-normal cursor-pointer">
                     Allow to comment
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="editCanAdmin"
+                    checked={permissions.canAdmin}
+                    onCheckedChange={(checked) =>
+                      setPermissions(prev => ({ ...prev, canAdmin: checked as boolean }))
+                    }
+                  />
+                  <Label htmlFor="editCanAdmin" className="text-sm font-normal cursor-pointer flex items-center gap-1">
+                    <Shield className="h-3 w-3" />
+                    Allow to access admin panel
                   </Label>
                 </div>
               </div>
@@ -384,6 +468,13 @@ export function UserManagement() {
                       </Badge>
                       <Badge variant={user.canComment !== false ? "default" : "secondary"} className="w-fit">
                         {user.canComment !== false ? 'Can Comment' : 'Cannot Comment'}
+                      </Badge>
+                      <Badge 
+                        variant={(user as any).canAdmin !== false ? "default" : "secondary"} 
+                        className="w-fit flex items-center gap-1"
+                      >
+                        {(user as any).canAdmin !== false && <Shield className="h-3 w-3" />}
+                        {(user as any).canAdmin !== false ? 'Admin Access' : 'No Admin Access'}
                       </Badge>
                     </div>
                   </TableCell>

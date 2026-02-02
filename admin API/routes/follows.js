@@ -1,5 +1,5 @@
 const express = require('express');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
@@ -28,7 +28,7 @@ const authenticateUser = async (req, res, next) => {
       const userId = tokenParts.slice(4).join('-');
 
       try {
-        const user = await new AV.Query(AV.User).get(userId);
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -68,7 +68,7 @@ router.get('/:authorId/status', async (req, res) => {
         if (tokenParts.length >= 5) {
           const userId = tokenParts.slice(4).join('-');
           try {
-            currentUser = await new AV.Query(AV.User).get(userId);
+            currentUser = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
           } catch (error) {
             // 用户不存在或token无效，继续执行
           }
@@ -84,9 +84,8 @@ router.get('/:authorId/status', async (req, res) => {
       });
     }
 
-    // 验证authorId是否为有效的用户ID格式（LeanCloud ObjectId通常是24位十六进制字符串）
-    // 如果authorId是'system-admin'等特殊值，直接返回false
-    if (!authorId || authorId === 'system-admin' || !/^[a-f0-9]{24}$/i.test(authorId)) {
+    // 验证authorId是否为有效的用户ID
+    if (!authorId || authorId === 'system-admin' || !/^\d+$/.test(authorId)) {
       return res.json({
         success: true,
         following: false
@@ -94,28 +93,23 @@ router.get('/:authorId/status', async (req, res) => {
     }
 
     try {
-    const authorPointer = AV.Object.createWithoutData('_User', authorId);
-    const query = new AV.Query('Follow');
-    query.equalTo('follower', currentUser);
-    query.equalTo('following', authorPointer);
+      const result = await db.query(
+        'SELECT COUNT(*) as count FROM Follow WHERE followerId = ? AND followingId = ?',
+        [currentUser.id, authorId]
+      );
+      const count = result[0]?.count || 0;
 
-    const count = await query.count();
-
-    res.json({
-      success: true,
-      following: count > 0
-    });
+      res.json({
+        success: true,
+        following: count > 0
+      });
     } catch (queryError) {
-      // 如果Follow类不存在（404错误）或其他查询错误，返回false
-      if (queryError.code === 101 || queryError.code === 404) {
-        // Follow类不存在，返回false
-        return res.json({
-          success: true,
-          following: false
-        });
-      }
-      // 其他错误，重新抛出
-      throw queryError;
+      // 如果Follow表不存在或其他查询错误，返回false
+      console.error('查询关注状态失败:', queryError);
+      return res.json({
+        success: true,
+        following: false
+      });
     }
   } catch (error) {
     console.error('Check follow status error:', error);
@@ -141,34 +135,40 @@ router.post('/:authorId/toggle', authenticateUser, async (req, res) => {
     }
 
     // 不能关注自己
-    if (currentUser.id === authorId) {
+    if (currentUser.id.toString() === authorId) {
       return res.status(400).json({
         success: false,
         message: 'Cannot follow yourself'
       });
     }
 
-    const authorPointer = AV.Object.createWithoutData('_User', authorId);
-    const query = new AV.Query('Follow');
-    query.equalTo('follower', currentUser);
-    query.equalTo('following', authorPointer);
+    // 验证被关注的用户是否存在
+    const author = await db.findOne('SELECT id FROM User WHERE id = ?', [authorId]);
+    if (!author) {
+      return res.status(404).json({
+        success: false,
+        message: 'Author not found'
+      });
+    }
 
-    const existingFollow = await query.first();
+    const existingFollow = await db.findOne(
+      'SELECT id FROM Follow WHERE followerId = ? AND followingId = ?',
+      [currentUser.id, authorId]
+    );
 
     if (existingFollow) {
       // 取消关注
-      await existingFollow.destroy();
+      await db.remove('Follow', 'id = ?', [existingFollow.id]);
       res.json({
         success: true,
         following: false
       });
     } else {
       // 关注
-      const FollowClass = AV.Object.extend('Follow');
-      const follow = new FollowClass();
-      follow.set('follower', currentUser);
-      follow.set('following', authorPointer);
-      await follow.save();
+      await db.insert('Follow', {
+        followerId: currentUser.id,
+        followingId: parseInt(authorId)
+      });
       res.json({
         success: true,
         following: true
@@ -184,4 +184,3 @@ router.post('/:authorId/toggle', authenticateUser, async (req, res) => {
 });
 
 module.exports = router;
-

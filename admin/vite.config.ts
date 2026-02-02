@@ -23,11 +23,10 @@ export default defineConfig({
   cacheDir: process.env.VITE_CACHE_DIR || '/tmp/vite-cache-admin', // 使用临时目录避免权限问题
   optimizeDeps: {
     force: true, // 强制重新构建依赖，解决 "Outdated Optimize Dep" 错误
-    include: ['leancloud-storage'], // 预构建 leancloud-storage
   },
   build: {
     rollupOptions: {
-      external: [], // leancloud-storage 不应该被 externalize，应该在构建时包含
+      external: [],
     },
   },
   base: '/Video-admin/', // 设置基础路径，匹配部署路径

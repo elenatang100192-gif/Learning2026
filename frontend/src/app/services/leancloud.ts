@@ -34,9 +34,6 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   return response.json();
 };
 
-// 创建查询的辅助函数
-const createQuery = (className: string) => new AV.Query(className);
-
 // 数据类型定义
 export interface Category {
   id: string;

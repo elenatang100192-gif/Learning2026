@@ -7,25 +7,23 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
-const AV = require('leancloud-storage');
+const db = require('./utils/db');
 
-// 初始化LeanCloud（从环境变量读取）
-AV.init({
-  appId: process.env.LEANCLOUD_APP_ID || 'RDeCDLtbY5VWuuVuOV8GUfbl-gzGzoHsz',
-  appKey: process.env.LEANCLOUD_APP_KEY || '1w0cQLBZIaJ32tjaU7RkDu3n',
-  masterKey: process.env.LEANCLOUD_MASTER_KEY || 'Ub2GDZGGNo0NuUOvDRheK04Y',
-  serverURL: process.env.LEANCLOUD_SERVER_URL || 'https://rdecdltb.lc-cn-n1-shared.com'
+// 测试MySQL数据库连接
+db.testConnection().then(success => {
+  if (!success) {
+    console.error('❌ 数据库连接失败，请检查配置');
+    process.exit(1);
+  }
 });
-
-// 使用Master Key进行操作
-AV.Cloud.useMasterKey();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 // 中间件配置（CORS 必须在 helmet 之前）
 app.use(compression());
-app.use(morgan('combined'));
+// 使用 'dev' 格式，更易读，同时保留详细日志
+app.use(morgan('dev'));
 
 // 辅助函数：从URL中提取域名（移除路径部分）
 function extractOrigin(url) {
@@ -46,6 +44,7 @@ const allowedOrigins = [
   'http://localhost:5173', // 前端开发环境
   'http://localhost:5175', // 后台管理界面开发环境
   'http://localhost:5176', // 后台管理界面（备用端口）
+  'http://localhost:5177', // 后台管理界面（备用端口2）
   // 生产环境域名（硬编码，确保CORS正常工作）
   'https://video-app-env-8gpoewzu84d85ace-1319956699.tcloudbaseapp.com',
   // 从环境变量读取生产环境域名（提取域名部分）
@@ -194,7 +193,7 @@ app.use('/api/videos', (req, res, next) => {
 });
 
 // API路由
-const authRoutes = require('./routes/auth');
+const { router: authRoutes } = require('./routes/auth');
 const videoRoutes = require('./routes/videos');
 const categoryRoutes = require('./routes/categories');
 const userRoutes = require('./routes/users');
@@ -284,7 +283,8 @@ app.use((error, req, res, next) => {
     });
   }
 
-  if (error.code === 101) { // LeanCloud Object not found
+  // MySQL数据库错误处理
+  if (error.code === 'ER_NO_SUCH_TABLE' || error.code === 'ER_BAD_FIELD_ERROR') {
     return res.status(404).json({
       success: false,
       message: 'Resource not found'
@@ -308,7 +308,7 @@ app.use((error, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`🚀 Video App Backend API Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🔗 LeanCloud connected: ${AV.applicationId}`);
+  console.log(`🔗 MySQL Database: ${process.env.DB_DATABASE || 'nexusmind'}`);
 });
 
 module.exports = app;

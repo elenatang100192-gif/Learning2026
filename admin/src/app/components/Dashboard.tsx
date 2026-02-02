@@ -4,7 +4,7 @@ import { Button } from './ui/button';
 import { Skeleton } from './ui/skeleton';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Video as VideoIcon, Eye, AlertCircle, Users, Play } from 'lucide-react';
-import { videoAPI, userAPI, type Video } from '../services/leancloud';
+import { apiRequest, type Video } from '../services/leancloud';
 import { toast } from 'sonner';
 import { useLanguage } from '../contexts/LanguageContext';
 import {
@@ -38,23 +38,34 @@ export function Dashboard() {
     try {
       setLoading(true);
 
-      // 并行获取数据
-      const [publishedVideos, pendingVideos, allVideos, usersResponse] = await Promise.all([
-        videoAPI.getList({ status: '已发布' }, 1, 10000), // 已发布的视频
-        videoAPI.getList({ status: '待审核' }, 1, 10000), // 待审核视频
-        videoAPI.getList({}, 1, 10000), // 所有视频（用于统计总视频数）
-        // 获取用户列表（limit最大为100，但API会返回总数）
-        (async () => {
-          try {
-            const response = await fetch('http://localhost:3001/api/users?page=1&limit=100');
-            const data = await response.json();
-            return data;
-          } catch (error) {
-            console.error('获取用户列表失败:', error);
-            return { success: false, data: [], pagination: { total: 0 } };
-          }
-        })()
+      // 并行获取数据（使用MySQL后端API）
+      const [publishedVideosResponse, pendingVideosResponse, allVideosResponse, usersResponse] = await Promise.all([
+        // 已发布的视频（从MySQL获取）
+        apiRequest('/videos?status=已发布&page=1&limit=10000').catch(err => {
+          console.error('获取已发布视频失败:', err);
+          return { success: false, data: [] };
+        }),
+        // 待审核视频（从MySQL获取）
+        apiRequest('/videos?status=待审核&page=1&limit=10000').catch(err => {
+          console.error('获取待审核视频失败:', err);
+          return { success: false, data: [] };
+        }),
+        // 所有视频（从MySQL获取）
+        apiRequest('/videos?page=1&limit=10000').catch(err => {
+          console.error('获取所有视频失败:', err);
+          return { success: false, data: [] };
+        }),
+        // 获取用户列表（从MySQL获取）
+        apiRequest('/users?page=1&limit=100').catch(err => {
+          console.error('获取用户列表失败:', err);
+          return { success: false, data: [], pagination: { total: 0 } };
+        })
       ]);
+
+      // 从API响应中提取视频数据
+      const publishedVideos = publishedVideosResponse?.success ? publishedVideosResponse.data || [] : [];
+      const pendingVideos = pendingVideosResponse?.success ? pendingVideosResponse.data || [] : [];
+      const allVideos = allVideosResponse?.success ? allVideosResponse.data || [] : [];
       
       // 从用户API响应中获取总数
       const totalUsers = usersResponse?.success && usersResponse?.pagination?.total !== undefined 
@@ -62,7 +73,7 @@ export function Dashboard() {
         : 0;
       
       // 计算总播放量（已发布视频的播放量之和）
-      const totalViews = publishedVideos.reduce((sum, video) => sum + (video.viewCount || 0), 0);
+      const totalViews = publishedVideos.reduce((sum: number, video: Video) => sum + (video.viewCount || 0), 0);
       
       // 计算每周播放趋势（最近7天）
       const weeklyTrend = calculateWeeklyTrend(publishedVideos);

@@ -1,5 +1,5 @@
 const express = require('express');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
@@ -14,9 +14,8 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    const sessionToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const sessionToken = authHeader.substring(7);
 
-    // 我们的session token格式是: otp-token-{timestamp}-{random}-{userId}
     if (!sessionToken.startsWith('otp-token-')) {
       return res.status(401).json({
         success: false,
@@ -24,14 +23,12 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    // 从token中提取用户ID
     const tokenParts = sessionToken.split('-');
     if (tokenParts.length >= 5) {
-      const userId = tokenParts.slice(4).join('-'); // 处理userId中可能包含的'-'字符
+      const userId = tokenParts.slice(4).join('-');
 
       try {
-        // 从LeanCloud获取用户信息
-        const user = await new AV.Query(AV.User).get(userId);
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -71,7 +68,7 @@ router.get('/:videoId/status', async (req, res) => {
         if (tokenParts.length >= 5) {
           const userId = tokenParts.slice(4).join('-');
           try {
-            currentUser = await new AV.Query(AV.User).get(userId);
+            currentUser = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
           } catch (error) {
             // 用户不存在或token无效，继续执行
           }
@@ -87,12 +84,11 @@ router.get('/:videoId/status', async (req, res) => {
       });
     }
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Like');
-    query.equalTo('user', currentUser);
-    query.equalTo('video', videoPointer);
-
-    const count = await query.count();
+    const result = await db.query(
+      'SELECT COUNT(*) as count FROM `Like` WHERE userId = ? AND videoId = ?',
+      [currentUser.id, videoId]
+    );
+    const count = result[0]?.count || 0;
 
     res.json({
       success: true,
@@ -120,62 +116,49 @@ router.post('/:videoId/toggle', authenticateUser, async (req, res) => {
       });
     }
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Like');
-    query.equalTo('user', currentUser);
-    query.equalTo('video', videoPointer);
+    // 验证视频是否存在
+    const video = await db.findOne('SELECT id, likeCount FROM Video WHERE id = ?', [videoId]);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
 
-    const existingLike = await query.first();
+    // 检查是否已点赞
+    const existingLike = await db.findOne(
+      'SELECT id FROM `Like` WHERE userId = ? AND videoId = ?',
+      [currentUser.id, videoId]
+    );
 
     if (existingLike) {
       // 取消点赞
-      await existingLike.destroy();
+      await db.remove('`Like`', 'id = ?', [existingLike.id]);
       
-      // 先获取当前视频的点赞数，确保不会减到负数
-      const currentVideo = await new AV.Query('Video').get(videoId);
-      const currentLikeCount = currentVideo.get('likeCount') || 0;
-      
-      // 减少视频点赞数，但确保不会小于0
-      const video = AV.Object.createWithoutData('Video', videoId);
-      if (currentLikeCount > 0) {
-      video.increment('likeCount', -1);
-      await video.save();
-      } else {
-        // 如果已经是0或负数，直接设置为0
-        video.set('likeCount', 0);
-        await video.save();
-      }
-
-      // 重新获取视频以获取更新后的点赞数
-      const updatedVideo = await new AV.Query('Video').get(videoId);
-      const likeCount = Math.max(0, updatedVideo.get('likeCount') || 0); // 确保不会是负数
+      // 更新视频点赞数，确保不会小于0
+      const newLikeCount = Math.max(0, (video.likeCount || 0) - 1);
+      await db.update('Video', { likeCount: newLikeCount }, 'id = ?', [videoId]);
 
       res.json({
         success: true,
         liked: false,
-        likeCount
+        likeCount: newLikeCount
       });
     } else {
       // 点赞
-      const LikeClass = AV.Object.extend('Like');
-      const like = new LikeClass();
-      like.set('user', currentUser);
-      like.set('video', videoPointer);
-      await like.save();
+      await db.insert('`Like`', {
+        userId: currentUser.id,
+        videoId: parseInt(videoId)
+      });
 
-      // 增加视频点赞数 - 使用 createWithoutData（与 videos.js 中的 viewCount 方式一致）
-      const video = AV.Object.createWithoutData('Video', videoId);
-      video.increment('likeCount', 1);
-      await video.save();
-
-      // 重新获取视频以获取更新后的点赞数
-      const updatedVideo = await new AV.Query('Video').get(videoId);
-      const likeCount = Math.max(0, updatedVideo.get('likeCount') || 0); // 确保不会是负数
+      // 增加视频点赞数
+      const newLikeCount = (video.likeCount || 0) + 1;
+      await db.update('Video', { likeCount: newLikeCount }, 'id = ?', [videoId]);
 
       res.json({
         success: true,
         liked: true,
-        likeCount
+        likeCount: newLikeCount
       });
     }
   } catch (error) {

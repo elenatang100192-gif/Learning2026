@@ -1,8 +1,10 @@
 const express = require('express');
 const multer = require('multer');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
+const { uploadFile } = require('../utils/fileUpload');
 
 const router = express.Router();
+
 // 用户认证中间件
 const authenticateUser = async (req, res, next) => {
   try {
@@ -28,7 +30,7 @@ const authenticateUser = async (req, res, next) => {
       const userId = tokenParts.slice(4).join('-');
 
       try {
-        const user = await new AV.Query(AV.User).get(userId);
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -57,7 +59,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB limit (增加以支持更大的视频文件)
+    fileSize: 500 * 1024 * 1024, // 500MB limit
     fieldSize: 10 * 1024 * 1024, // 10MB for non-file fields
   },
   fileFilter: (req, file, cb) => {
@@ -86,16 +88,15 @@ router.post('/video', authenticateUser, upload.single('video'), async (req, res)
 
     const { originalname, buffer, mimetype } = req.file;
 
-    // 上传到LeanCloud存储
-    const avFile = new AV.File(originalname, buffer, mimetype);
-    const uploadedFile = await avFile.save();
+    // 上传到七牛云存储
+    const url = await uploadFile(buffer, originalname, mimetype, 'videos');
 
     res.json({
       success: true,
       message: 'Video uploaded successfully',
       data: {
-        url: uploadedFile.url(),
-        filename: uploadedFile.name(),
+        url: url,
+        filename: originalname,
         size: buffer.length
       }
     });
@@ -103,7 +104,8 @@ router.post('/video', authenticateUser, upload.single('video'), async (req, res)
     console.error('Video upload error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to upload video'
+      message: 'Failed to upload video',
+      error: error.message
     });
   }
 });
@@ -124,16 +126,15 @@ router.post('/cover', authenticateUser, upload.single('cover'), async (req, res)
 
     const { originalname, buffer, mimetype } = req.file;
 
-    // 上传到LeanCloud存储
-    const avFile = new AV.File(originalname, buffer, mimetype);
-    const uploadedFile = await avFile.save();
+    // 上传到七牛云存储
+    const url = await uploadFile(buffer, originalname, mimetype, 'covers');
 
     res.json({
       success: true,
       message: 'Cover image uploaded successfully',
       data: {
-        url: uploadedFile.url(),
-        filename: uploadedFile.name(),
+        url: url,
+        filename: originalname,
         size: buffer.length
       }
     });
@@ -141,12 +142,13 @@ router.post('/cover', authenticateUser, upload.single('cover'), async (req, res)
     console.error('Cover upload error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to upload cover image'
+      message: 'Failed to upload cover image',
+      error: error.message
     });
   }
 });
 
-// 后台管理上传视频文件（使用Master Key，不需要认证）
+// 后台管理上传视频文件（不需要认证）
 router.post('/admin/video', upload.single('video'), async (req, res) => {
   // 设置上传请求超时时间为10分钟（视频文件可能较大）
   req.setTimeout(10 * 60 * 1000);
@@ -162,18 +164,15 @@ router.post('/admin/video', upload.single('video'), async (req, res) => {
 
     const { originalname, buffer, mimetype } = req.file;
 
-    // 使用Master Key上传到LeanCloud存储
-    // 注意：AV.File.save() 的 useMasterKey 选项需要作为第二个参数传递
-    AV.Cloud.useMasterKey();
-    const avFile = new AV.File(originalname, buffer, mimetype);
-    const uploadedFile = await avFile.save();
+    // 上传到七牛云存储
+    const url = await uploadFile(buffer, originalname, mimetype, 'videos');
 
     res.json({
       success: true,
       message: 'Video uploaded successfully',
       data: {
-        url: uploadedFile.url(),
-        filename: uploadedFile.name(),
+        url: url,
+        filename: originalname,
         size: buffer.length
       }
     });
@@ -187,7 +186,7 @@ router.post('/admin/video', upload.single('video'), async (req, res) => {
   }
 });
 
-// 后台管理上传封面图片（使用Master Key，不需要认证）
+// 后台管理上传封面图片（不需要认证）
 router.post('/admin/cover', upload.single('cover'), async (req, res) => {
   // 设置上传请求超时时间为5分钟
   req.setTimeout(5 * 60 * 1000);
@@ -203,22 +202,15 @@ router.post('/admin/cover', upload.single('cover'), async (req, res) => {
 
     const { originalname, buffer, mimetype } = req.file;
     const { bookId } = req.body; // Optional: bookId to save cover image URL to Book object
-
-    // 使用Master Key上传到LeanCloud存储
-    AV.Cloud.useMasterKey();
-    const avFile = new AV.File(originalname, buffer, mimetype);
-    const uploadedFile = await avFile.save();
     
-    const coverImageUrl = uploadedFile.url();
+    const coverImageUrl = await uploadFile(buffer, originalname, mimetype, 'covers');
     
     // If bookId is provided, save the cover image URL to the Book object
     if (bookId) {
       try {
-        const Book = AV.Object.extend('Book');
-        const book = await new AV.Query('Book').get(bookId);
+        const book = await db.findOne('SELECT id FROM Book WHERE id = ?', [bookId]);
         if (book) {
-          book.set('blogCoverUrl', coverImageUrl);
-          await book.save();
+          await db.update('Book', { blogCoverUrl: coverImageUrl }, 'id = ?', [bookId]);
           console.log(`✅ Cover image URL saved to Book object: bookId=${bookId}, url=${coverImageUrl}`);
         } else {
           console.warn(`⚠️ Book not found: bookId=${bookId}`);
@@ -234,7 +226,7 @@ router.post('/admin/cover', upload.single('cover'), async (req, res) => {
       message: 'Cover image uploaded successfully',
       data: {
         url: coverImageUrl,
-        filename: uploadedFile.name(),
+        filename: originalname,
         size: buffer.length
       }
     });

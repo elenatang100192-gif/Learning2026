@@ -8,11 +8,11 @@
 前端应用 (React) ←───── HTTP API ─────→ 后端API (Express.js)
     ↓                                           ↓
     ↓                                           ↓
-浏览器                                     LeanCloud SDK
+浏览器                                     Express API
+                                         ↓
+                                         MySQL数据库
                                               ↓
-                                         LeanCloud数据库
-                                              ↓
-                                         MongoDB + 文件存储
+                                         MySQL + OSS文件存储
 ```
 
 ## 🚀 快速开始
@@ -44,11 +44,11 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 TENCENT_SECRET_ID=your_tencent_secret_id_here
 TENCENT_SECRET_KEY=your_tencent_secret_key_here
 
-# LeanCloud配置
-LEANCLOUD_APP_ID=your_leancloud_app_id_here
-LEANCLOUD_APP_KEY=your_leancloud_app_key_here
-LEANCLOUD_MASTER_KEY=your_leancloud_master_key_here
-LEANCLOUD_SERVER_URL=your_leancloud_server_url_here
+# MySQL数据库配置
+DB_HOST=localhost
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_NAME=your_db_name
 ```
 
 **重要提示**：
@@ -120,11 +120,11 @@ npm start
 PORT=3001
 NODE_ENV=development
 
-# LeanCloud配置
-LEANCLOUD_APP_ID=your_app_id
-LEANCLOUD_APP_KEY=your_app_key
-LEANCLOUD_MASTER_KEY=your_master_key
-LEANCLOUD_SERVER_URL=https://your-server-url.com
+# MySQL数据库配置
+DB_HOST=localhost
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_NAME=your_db_name
 
 # CORS配置
 FRONTEND_URL=http://localhost:5174

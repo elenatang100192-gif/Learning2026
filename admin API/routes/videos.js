@@ -1,5 +1,5 @@
 const express = require('express');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
@@ -24,112 +24,80 @@ router.get('/', async (req, res) => {
     console.log('📋 Raw query:', req.query);
     console.log('📋 Parsed status:', status);
 
-    const query = new AV.Query('Video');
+    // 构建SQL查询
+    let sql = `
+      SELECT v.*, 
+             c.id as category_id, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+             u.id as author_id, u.username as author_username, u.email as author_email,
+             b.id as book_id, b.title as book_title, b.author as book_author
+      FROM Video v
+      LEFT JOIN Category c ON v.categoryId = c.id
+      LEFT JOIN User u ON v.authorId = u.id
+      LEFT JOIN Book b ON v.bookId = b.id
+      WHERE 1=1
+    `;
+    const params = [];
 
     // 过滤条件
     if (category) {
-      // 按nameCn（中文名称）查询分类，查找所有匹配的分类
-      const categoryQuery = new AV.Query('Category');
-      categoryQuery.equalTo('nameCn', category);
-      const categoryObjs = await categoryQuery.find();
-
-      if (categoryObjs && categoryObjs.length > 0) {
-        // 如果有多个分类，使用包含查询（查询关联到任意一个分类的视频）
-        if (categoryObjs.length === 1) {
-          console.log(`使用分类: ${categoryObjs[0].get('nameCn')} (ID: ${categoryObjs[0].id}, name: ${categoryObjs[0].get('name')})`);
-          query.equalTo('category', categoryObjs[0]);
-        } else {
-          console.log(`找到 ${categoryObjs.length} 个匹配的分类，使用包含查询`);
-          console.log(`分类列表:`, categoryObjs.map(c => ({ id: c.id, name: c.get('name'), nameCn: c.get('nameCn') })));
-          // 使用包含查询，匹配任意一个分类
-          query.containedIn('category', categoryObjs);
-        }
+      // 按nameCn（中文名称）查询分类
+      const categories = await db.findAll('SELECT id FROM Category WHERE nameCn = ?', [category]);
+      if (categories && categories.length > 0) {
+        const categoryIds = categories.map(c => c.id);
+        sql += ` AND v.categoryId IN (${categoryIds.map(() => '?').join(',')})`;
+        params.push(...categoryIds);
+        console.log(`使用分类: ${category} (IDs: ${categoryIds.join(', ')})`);
       } else {
         console.log(`未找到分类: ${category}`);
+        // 如果没有找到分类，返回空结果
+        return res.json({
+          success: true,
+          data: [],
+          pagination: { page: parseInt(page), limit: parseInt(limit) }
+        });
       }
     }
 
-    if (status) {
-      query.equalTo('status', status);
-      console.log(`设置status过滤: ${status}`);
+    // 状态过滤（如果不传status，则返回所有状态的视频）
+    if (req.query.status !== undefined && req.query.status !== '') {
+      const finalStatus = req.query.status;
+      sql += ` AND v.status = ?`;
+      params.push(finalStatus);
       
       // 如果状态是'已发布'，同时过滤掉已禁用的视频
-      if (status === '已发布') {
-        query.equalTo('disabled', false);
+      if (finalStatus === '已发布') {
+        sql += ` AND v.disabled = 0`;
         console.log('已发布状态：同时过滤已禁用的视频');
       }
+    } else {
+      // 如果没有指定status，返回所有状态的视频（但排除已禁用的视频）
+      sql += ` AND v.disabled = 0`;
+      console.log('未指定状态：返回所有未禁用的视频');
     }
 
-    // 只获取已发布的视频，除非明确指定其他状态
-    if (!req.query.status) {
-      query.equalTo('status', '已发布');
-      query.equalTo('disabled', false);
-      console.log('使用默认过滤: 已发布且未禁用');
-    }
-
-    // 排序：优先按displayOrder排序（升序），然后按createdAt排序（降序）
-    // displayOrder为null/undefined的视频会排在后面
-    query.addAscending('displayOrder');
-    query.descending('createdAt');
+    // 排序：优先按displayOrder排序（升序，NULL值排在最后），然后按createdAt排序（降序）
+    sql += ` ORDER BY ISNULL(v.displayOrder), v.displayOrder ASC, v.createdAt DESC`;
 
     // 分页
-    query.limit(parseInt(limit));
-    query.skip((parseInt(page) - 1) * parseInt(limit));
-    
-    // 去重：确保同一个视频（相同title和videoUrl）只返回一次
-    // 注意：LeanCloud查询本身不支持去重，需要在应用层处理
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(parseInt(limit), offset);
 
-    // 包含关联对象
-    query.include('category');
-    query.include('author');
-    query.include('book');
-
-    const videos = await query.find();
-
-    // 手动排序：确保displayOrder为null/undefined的视频排在后面
-    // LeanCloud的addAscending可能会把null值排在最前面，所以需要手动处理
-    videos.sort((a, b) => {
-      const orderA = a.get('displayOrder');
-      const orderB = b.get('displayOrder');
-      
-      // 如果两个都有displayOrder，按升序排序
-      if (orderA !== null && orderA !== undefined && orderB !== null && orderB !== undefined) {
-        if (orderA !== orderB) {
-          return orderA - orderB; // 升序：1 < 2 < 3
-        }
-        // 如果displayOrder相同，按createdAt降序排序（最新的在前）
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA;
-      }
-      // 如果只有A有displayOrder，A排在前面
-      else if (orderA !== null && orderA !== undefined && (orderB === null || orderB === undefined)) {
-        return -1;
-      }
-      // 如果只有B有displayOrder，B排在前面
-      else if ((orderA === null || orderA === undefined) && orderB !== null && orderB !== undefined) {
-        return 1;
-      }
-      // 如果两个都没有displayOrder，按createdAt降序排序（最新的在前）
-      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateB - dateA;
-    });
+    const videos = await db.query(sql, params);
 
     // 转换数据格式
     const videoData = videos.map(video => {
-      const author = video.get('author');
       // 如果没有作者（后台发布的视频），创建默认作者信息
-      const authorData = author ? {
-        id: author.id,
-        username: author.get('username'),
-        email: author.get('email'),
-        avatar: author.get('avatar'),
-        joinDate: author.createdAt.toISOString().split('T')[0],
-        totalVideos: author.get('totalVideos') || 0,
-        totalViews: author.get('totalViews') || 0,
-        canPublish: author.get('canPublish') !== false,
-        canComment: author.get('canComment') !== false
+      const authorData = video.author_id ? {
+        id: video.author_id,
+        username: video.author_username,
+        email: video.author_email,
+        avatar: null,
+        joinDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: false,
+        canComment: false
       } : {
         id: 'system-admin',
         username: 'Ashley HR Center',
@@ -145,31 +113,31 @@ router.get('/', async (req, res) => {
 
       return {
         id: video.id,
-        title: video.get('title'),
-        titleEn: video.get('titleEn'),
-        category: {
-          id: video.get('category').id,
-          name: video.get('category').get('name'),
-          nameCn: video.get('category').get('nameCn'),
-          sortOrder: video.get('category').get('sortOrder')
-        },
-        videoUrl: video.get('videoUrl'),
-        videoUrlEn: video.get('videoUrlEn') || null,
-        coverUrl: video.get('coverUrl'),
-        duration: video.get('duration') || 0,
-        fileSize: video.get('fileSize'),
-        status: video.get('status'),
-        disabled: video.get('disabled'),
-        viewCount: Math.max(0, video.get('viewCount') || 0),
-        likeCount: Math.max(0, video.get('likeCount') || 0), // 确保不会是负数
-        uploadDate: video.createdAt.toISOString().split('T')[0],
-        publishDate: video.get('publishDate'),
-        displayOrder: video.get('displayOrder') || undefined,
+        title: video.title,
+        titleEn: video.titleEn || null,
+        category: video.category_id ? {
+          id: video.category_id,
+          name: video.category_name,
+          nameCn: video.category_nameCn,
+          sortOrder: video.category_sortOrder
+        } : null,
+        videoUrl: video.videoUrl,
+        videoUrlEn: video.videoUrlEn || null,
+        coverUrl: video.coverUrl || null,
+        duration: video.duration || 0,
+        fileSize: video.fileSize || 0,
+        status: video.status,
+        disabled: video.disabled || false,
+        viewCount: Math.max(0, video.viewCount || 0),
+        likeCount: Math.max(0, video.likeCount || 0),
+        uploadDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : null,
+        publishDate: video.publishDate || null,
+        displayOrder: video.displayOrder || undefined,
         author: authorData,
-        book: video.get('book') ? {
-          id: video.get('book').id,
-          title: video.get('book').get('title'),
-          author: video.get('book').get('author')
+        book: video.book_id ? {
+          id: video.book_id,
+          title: video.book_title,
+          author: video.book_author
         } : undefined
       };
     });
@@ -196,11 +164,15 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const query = new AV.Query('Video');
-    query.include('category');
-    query.include('author');
-
-    const video = await query.get(id);
+    const video = await db.findOne(`
+      SELECT v.*, 
+             c.id as category_id, c.name as category_name, c.nameCn as category_nameCn,
+             u.id as author_id, u.username as author_username, u.email as author_email
+      FROM Video v
+      LEFT JOIN Category c ON v.categoryId = c.id
+      LEFT JOIN User u ON v.authorId = u.id
+      WHERE v.id = ?
+    `, [id]);
 
     if (!video) {
       return res.status(404).json({
@@ -211,54 +183,46 @@ router.get('/:id', async (req, res) => {
 
     const videoData = {
       id: video.id,
-      title: video.get('title'),
-      titleEn: video.get('titleEn'),
-      category: {
-        id: video.get('category').id,
-        name: video.get('category').get('name'),
-        nameCn: video.get('category').get('nameCn'),
-        sortOrder: video.get('category').get('sortOrder')
-      },
-      videoUrl: video.get('videoUrl'),
-      coverUrl: video.get('coverUrl'),
-      duration: video.get('duration') || 0,
-      fileSize: video.get('fileSize'),
-      status: video.get('status'),
-      disabled: video.get('disabled'),
-      viewCount: video.get('viewCount') || 0,
-      likeCount: video.get('likeCount') || 0,
-      uploadDate: video.createdAt.toISOString().split('T')[0],
-      publishDate: video.get('publishDate'),
-      author: (() => {
-        const author = video.get('author');
-        if (author) {
-          return {
-            id: author.id,
-            username: author.get('username'),
-            email: author.get('email'),
-            avatar: author.get('avatar'),
-            joinDate: author.createdAt.toISOString().split('T')[0],
-            totalVideos: author.get('totalVideos') || 0,
-            totalViews: author.get('totalViews') || 0,
-            canPublish: author.get('canPublish') !== false,
-            canComment: author.get('canComment') !== false
-          };
-        } else {
-          // 后台发布的视频，没有author，返回默认作者信息
-          return {
-            id: 'system-admin',
-            username: 'Ashley HR Center',
-            usernameCn: '爱室丽人力中心',
-            email: 'admin@ashleyfurniture.com',
-            avatar: null,
-            joinDate: new Date().toISOString().split('T')[0],
-            totalVideos: 0,
-            totalViews: 0,
-            canPublish: false,
-            canComment: false
-          };
-        }
-      })()
+      title: video.title,
+      titleEn: video.titleEn || null,
+      category: video.category_id ? {
+        id: video.category_id,
+        name: video.category_name,
+        nameCn: video.category_nameCn,
+        sortOrder: video.category_sortOrder || 0
+      } : null,
+      videoUrl: video.videoUrl,
+      coverUrl: video.coverUrl || null,
+      duration: video.duration || 0,
+      fileSize: video.fileSize || 0,
+      status: video.status,
+      disabled: video.disabled || false,
+      viewCount: video.viewCount || 0,
+      likeCount: video.likeCount || 0,
+      uploadDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : null,
+      publishDate: video.publishDate || null,
+      author: video.author_id ? {
+        id: video.author_id,
+        username: video.author_username,
+        email: video.author_email,
+        avatar: null,
+        joinDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: false,
+        canComment: false
+      } : {
+        id: 'system-admin',
+        username: 'Ashley HR Center',
+        usernameCn: '爱室丽人力中心',
+        email: 'admin@ashleyfurniture.com',
+        avatar: null,
+        joinDate: new Date().toISOString().split('T')[0],
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: false,
+        canComment: false
+      }
     };
 
     res.json({
@@ -279,9 +243,8 @@ router.post('/:id/view', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const video = AV.Object.createWithoutData('Video', id);
-    video.increment('viewCount', 1);
-    await video.save();
+    // 更新观看次数
+    await db.query('UPDATE Video SET viewCount = COALESCE(viewCount, 0) + 1 WHERE id = ?', [id]);
 
     console.log(`👁️ 视频 ${id} 观看次数 +1`);
 
@@ -325,8 +288,8 @@ const authenticateUser = async (req, res, next) => {
       const userId = tokenParts.slice(4).join('-'); // 处理userId中可能包含的'-'字符
 
       try {
-        // 从LeanCloud获取用户信息
-        const user = await new AV.Query(AV.User).get(userId);
+        // 从MySQL获取用户信息
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -364,26 +327,23 @@ router.post('/:id/watch', authenticateUser, async (req, res) => {
     }
 
     // 检查是否已存在观看记录
-    const existingQuery = new AV.Query('WatchHistory');
-    existingQuery.equalTo('user', currentUser);
-    existingQuery.equalTo('video', AV.Object.createWithoutData('Video', id));
-    existingQuery.descending('watchedAt');
-    existingQuery.limit(1);
-
-    const existingHistory = await existingQuery.first();
+    const existingHistory = await db.findOne(
+      'SELECT * FROM WatchHistory WHERE userId = ? AND videoId = ? ORDER BY watchedAt DESC LIMIT 1',
+      [currentUser.id, id]
+    );
 
     if (existingHistory) {
       // 更新观看时间
-      existingHistory.set('watchedAt', new Date());
-      await existingHistory.save();
+      await db.update('WatchHistory', { watchedAt: new Date() }, 'id = ?', [existingHistory.id]);
       console.log(`📺 更新观看历史: 用户 ${currentUser.id} 视频 ${id}`);
     } else {
       // 创建新的观看记录
-      const watchHistory = new AV.Object('WatchHistory');
-      watchHistory.set('user', currentUser);
-      watchHistory.set('video', AV.Object.createWithoutData('Video', id));
-      watchHistory.set('watchedAt', new Date());
-      await watchHistory.save();
+      await db.insert('WatchHistory', {
+        userId: currentUser.id,
+        videoId: parseInt(id),
+        watchedAt: new Date(),
+        progress: 0
+      });
       console.log(`📺 创建观看历史: 用户 ${currentUser.id} 视频 ${id}`);
     }
 
@@ -413,8 +373,8 @@ router.post('/publish', async (req, res) => {
       });
     }
 
-    // 获取分类对象（使用Master Key）
-    const category = await new AV.Query('Category').get(categoryId, { useMasterKey: true });
+    // 获取分类对象
+    const category = await db.findOne('SELECT * FROM Category WHERE id = ?', [categoryId]);
     if (!category) {
       return res.status(400).json({
         success: false,
@@ -423,50 +383,40 @@ router.post('/publish', async (req, res) => {
     }
 
     // 创建视频对象
-    const VideoClass = AV.Object.extend('Video');
-    const video = new VideoClass();
+    const videoData = {
+      title: title || titleEn || '',
+      titleEn: titleEn || title || '',
+      categoryId: parseInt(categoryId),
+      videoUrl: videoUrl || '',
+      videoUrlEn: videoUrlEn || null,
+      coverUrl: coverUrl || null,
+      duration: duration || 0,
+      status: '待审核',
+      disabled: 0,
+      viewCount: 0,
+      likeCount: 0,
+      fileSize: 0,
+      authorId: null
+    };
 
-    // 设置标题：如果只有titleEn，则titleEn作为主标题；如果只有title，则title作为主标题
-    video.set('title', title || titleEn || ''); // 至少有一个（已验证）
-    video.set('titleEn', titleEn || title || ''); // 如果只有一个，则两个字段都设置相同的值
-    video.set('category', category);
-    // 后台管理发布时，如果没有指定author，可以设置为null或使用系统用户
-    // 这里先不设置author，如果需要可以后续添加
-    video.set('videoUrl', videoUrl || '');
-    if (videoUrlEn) {
-      video.set('videoUrlEn', videoUrlEn);
-    }
-    video.set('coverUrl', coverUrl || '');
-    video.set('duration', duration || 0);
-    video.set('status', '待审核'); // 设置为待审核状态
-    video.set('disabled', false);
-    video.set('viewCount', 0);
-    video.set('likeCount', 0);
-    video.set('fileSize', 0); // 可以后续更新
+    // 保存视频
+    const videoId = await db.insert('Video', videoData);
 
-    // 保存视频（使用Master Key）
-    await video.save(null, { useMasterKey: true });
-
-    console.log(`📹 后台管理发布视频: ${title} (ID: ${video.id}), 时长: ${duration}秒`);
+    console.log(`📹 后台管理发布视频: ${title} (ID: ${videoId}), 时长: ${duration}秒`);
 
     // 重新获取视频以包含关联对象
-    const savedVideo = await new AV.Query('Video').get(video.id, { useMasterKey: true });
-    await savedVideo.fetch({ useMasterKey: true }, { include: ['category', 'book'] });
+    const savedVideo = await db.findOne(
+      `SELECT v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+              b.id as book_id, b.title as book_title, b.author as book_author
+       FROM Video v
+       LEFT JOIN Category c ON v.categoryId = c.id
+       LEFT JOIN Book b ON v.bookId = b.id
+       WHERE v.id = ?`,
+      [videoId]
+    );
 
-    // 返回视频数据
-    const author = savedVideo.get('author');
     // 如果没有作者（后台发布的视频），创建默认作者信息
-    const authorData = author ? {
-      id: author.id,
-      username: author.get('username'),
-      email: author.get('email'),
-      avatar: author.get('avatar'),
-      joinDate: author.createdAt.toISOString().split('T')[0],
-      totalVideos: author.get('totalVideos') || 0,
-      totalViews: author.get('totalViews') || 0,
-      canPublish: author.get('canPublish') !== false,
-      canComment: author.get('canComment') !== false
-    } : {
+    const authorData = {
       id: 'system-admin',
       username: 'Ashley HR Center',
       usernameCn: '爱室丽人力中心',
@@ -479,39 +429,39 @@ router.post('/publish', async (req, res) => {
       canComment: false
     };
 
-    const videoData = {
+    const responseData = {
       id: savedVideo.id,
-      title: savedVideo.get('title'),
-      titleEn: savedVideo.get('titleEn'),
+      title: savedVideo.title,
+      titleEn: savedVideo.titleEn,
       category: {
-        id: category.id,
-        name: category.get('name'),
-        nameCn: category.get('nameCn'),
-        sortOrder: category.get('sortOrder')
+        id: savedVideo.categoryId,
+        name: savedVideo.category_name,
+        nameCn: savedVideo.category_nameCn,
+        sortOrder: savedVideo.category_sortOrder
       },
-      videoUrl: savedVideo.get('videoUrl'),
-      videoUrlEn: savedVideo.get('videoUrlEn') || null,
-      coverUrl: savedVideo.get('coverUrl'),
-      duration: savedVideo.get('duration') || 0,
-      fileSize: savedVideo.get('fileSize'),
-      status: savedVideo.get('status'),
-      disabled: savedVideo.get('disabled'),
-      viewCount: savedVideo.get('viewCount') || 0,
-      likeCount: savedVideo.get('likeCount') || 0,
-      uploadDate: savedVideo.createdAt.toISOString().split('T')[0],
+      videoUrl: savedVideo.videoUrl,
+      videoUrlEn: savedVideo.videoUrlEn || null,
+      coverUrl: savedVideo.coverUrl,
+      duration: savedVideo.duration || 0,
+      fileSize: savedVideo.fileSize,
+      status: savedVideo.status,
+      disabled: savedVideo.disabled !== 0,
+      viewCount: savedVideo.viewCount || 0,
+      likeCount: savedVideo.likeCount || 0,
+      uploadDate: savedVideo.createdAt ? new Date(savedVideo.createdAt).toISOString().split('T')[0] : null,
       publishDate: null, // 待审核状态下没有发布日期
       author: authorData,
-      book: savedVideo.get('book') ? {
-        id: savedVideo.get('book').id,
-        title: savedVideo.get('book').get('title'),
-        author: savedVideo.get('book').get('author')
+      book: savedVideo.book_id ? {
+        id: savedVideo.book_id,
+        title: savedVideo.book_title,
+        author: savedVideo.book_author
       } : undefined
     };
 
     res.status(201).json({
       success: true,
       message: 'Video submitted for review successfully',
-      data: videoData
+      data: responseData
     });
 
   } catch (error) {
@@ -536,8 +486,8 @@ router.put('/:id/review', async (req, res) => {
       });
     }
 
-    // 获取视频对象（使用Master Key）
-    const video = await new AV.Query('Video').get(id, { useMasterKey: true });
+    // 获取视频对象
+    const video = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
     
     if (!video) {
       return res.status(404).json({
@@ -546,33 +496,36 @@ router.put('/:id/review', async (req, res) => {
       });
     }
 
-    // 更新视频状态（使用Master Key）
+    // 更新视频状态
+    const updateData = {};
     if (action === 'approve') {
-      video.set('status', '已发布');
-      video.set('disabled', false); // 确保审核通过后视频是启用状态
-      video.set('publishDate', new Date().toISOString().split('T')[0]);
+      updateData.status = '已发布';
+      updateData.disabled = 0;
+      updateData.publishDate = new Date().toISOString().split('T')[0];
       if (notes) {
-        video.set('reviewNotes', notes);
+        updateData.reviewNotes = notes;
       }
     } else {
-      video.set('status', '已驳回');
+      updateData.status = '已驳回';
       if (notes) {
-        video.set('reviewNotes', notes);
+        updateData.reviewNotes = notes;
       }
     }
 
-    await video.save(null, { useMasterKey: true });
+    await db.update('Video', updateData, 'id = ?', [id]);
 
     console.log(`✅ 视频审核完成: ${id} - ${action === 'approve' ? '已发布' : '已驳回'}`);
+
+    const updatedVideo = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
 
     res.json({
       success: true,
       message: action === 'approve' ? 'Video approved and published' : 'Video rejected',
       data: {
-        id: video.id,
-        status: video.get('status'),
-        publishDate: video.get('publishDate'),
-        reviewNotes: video.get('reviewNotes')
+        id: updatedVideo.id,
+        status: updatedVideo.status,
+        publishDate: updatedVideo.publishDate,
+        reviewNotes: updatedVideo.reviewNotes
       }
     });
 
@@ -599,8 +552,8 @@ router.put('/:id/toggle-status', async (req, res) => {
       });
     }
 
-    // 获取视频对象（使用Master Key）
-    const video = await new AV.Query('Video').get(id, { useMasterKey: true });
+    // 获取视频对象
+    const video = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
     
     if (!video) {
       return res.status(404).json({
@@ -609,9 +562,8 @@ router.put('/:id/toggle-status', async (req, res) => {
       });
     }
 
-    // 更新禁用状态（使用Master Key）
-    video.set('disabled', disabled);
-    await video.save(null, { useMasterKey: true });
+    // 更新禁用状态
+    await db.update('Video', { disabled: disabled ? 1 : 0 }, 'id = ?', [id]);
 
     console.log(`🔄 视频状态更新: ${id} - ${disabled ? '已禁用' : '已启用'}`);
 
@@ -620,7 +572,7 @@ router.put('/:id/toggle-status', async (req, res) => {
       message: disabled ? 'Video disabled' : 'Video enabled',
       data: {
         id: video.id,
-        disabled: video.get('disabled')
+        disabled: disabled
       }
     });
 
@@ -647,8 +599,8 @@ router.put('/:id/category', async (req, res) => {
       });
     }
 
-    // 获取分类对象（使用Master Key）
-    const category = await new AV.Query('Category').get(categoryId, { useMasterKey: true });
+    // 获取分类对象
+    const category = await db.findOne('SELECT * FROM Category WHERE id = ?', [categoryId]);
     if (!category) {
       return res.status(400).json({
         success: false,
@@ -656,8 +608,8 @@ router.put('/:id/category', async (req, res) => {
       });
     }
 
-    // 获取视频对象（使用Master Key）
-    const video = await new AV.Query('Video').get(id, { useMasterKey: true });
+    // 获取视频对象
+    const video = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
     
     if (!video) {
       return res.status(404).json({
@@ -666,11 +618,10 @@ router.put('/:id/category', async (req, res) => {
       });
     }
 
-    // 更新视频分类（使用Master Key）
-    video.set('category', category);
-    await video.save(null, { useMasterKey: true });
+    // 更新视频分类
+    await db.update('Video', { categoryId: parseInt(categoryId) }, 'id = ?', [id]);
 
-    console.log(`✅ 视频分类更新: ${id} - ${category.get('nameCn')}`);
+    console.log(`✅ 视频分类更新: ${id} - ${category.nameCn}`);
 
     res.json({
       success: true,
@@ -679,8 +630,8 @@ router.put('/:id/category', async (req, res) => {
         id: video.id,
         category: {
           id: category.id,
-          name: category.get('name'),
-          nameCn: category.get('nameCn')
+          name: category.name,
+          nameCn: category.nameCn
         }
       }
     });
@@ -715,8 +666,8 @@ router.put('/:id/displayOrder', async (req, res) => {
       });
     }
 
-    // 获取视频对象（使用Master Key）
-    const video = await new AV.Query('Video').get(id, { useMasterKey: true });
+    // 获取视频对象
+    const video = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
     
     if (!video) {
       return res.status(404).json({
@@ -725,9 +676,8 @@ router.put('/:id/displayOrder', async (req, res) => {
       });
     }
 
-    // 更新视频显示顺序（使用Master Key）
-    video.set('displayOrder', displayOrder);
-    await video.save(null, { useMasterKey: true });
+    // 更新视频显示顺序
+    await db.update('Video', { displayOrder: displayOrder }, 'id = ?', [id]);
 
     console.log(`✅ 视频显示顺序更新: ${id} - displayOrder: ${displayOrder}`);
 
@@ -750,6 +700,240 @@ router.put('/:id/displayOrder', async (req, res) => {
   }
 });
 
+// 创建视频（后台管理使用）
+router.post('/', async (req, res) => {
+  try {
+    const videoData = req.body;
+
+    // 验证必填字段
+    if (!videoData.title || !videoData.categoryId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: title, categoryId'
+      });
+    }
+
+    // 获取分类对象
+    const category = await db.findOne('SELECT * FROM Category WHERE id = ?', [videoData.categoryId]);
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category'
+      });
+    }
+
+    // 创建视频对象
+    const newVideoData = {
+      title: videoData.title || '',
+      titleEn: videoData.titleEn || null,
+      categoryId: parseInt(videoData.categoryId),
+      bookId: videoData.bookId ? parseInt(videoData.bookId) : null,
+      videoUrl: videoData.videoUrl || null,
+      videoUrlEn: videoData.videoUrlEn || null,
+      coverUrl: videoData.coverUrl || null,
+      duration: videoData.duration || 0,
+      fileSize: videoData.fileSize || 0,
+      status: videoData.status || '待审核',
+      disabled: videoData.disabled ? 1 : 0,
+      viewCount: videoData.viewCount || 0,
+      likeCount: videoData.likeCount || 0,
+      authorId: videoData.authorId ? parseInt(videoData.authorId) : null,
+      displayOrder: videoData.displayOrder || null,
+      reviewNotes: videoData.reviewNotes || null,
+      publishDate: videoData.publishDate || null,
+      aiExtractDate: videoData.aiExtractDate || null
+    };
+
+    // 保存视频
+    const videoId = await db.insert('Video', newVideoData);
+
+    console.log(`📹 后台管理创建视频: ${videoData.title} (ID: ${videoId})`);
+
+    // 重新获取视频以包含关联对象
+    const savedVideo = await db.findOne(
+      `SELECT v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+              b.id as book_id, b.title as book_title, b.author as book_author,
+              u.id as author_id, u.username as author_username, u.email as author_email
+       FROM Video v
+       LEFT JOIN Category c ON v.categoryId = c.id
+       LEFT JOIN Book b ON v.bookId = b.id
+       LEFT JOIN User u ON v.authorId = u.id
+       WHERE v.id = ?`,
+      [videoId]
+    );
+
+    // 如果没有作者（后台发布的视频），创建默认作者信息
+    const authorData = savedVideo.author_id ? {
+      id: savedVideo.author_id,
+      username: savedVideo.author_username,
+      email: savedVideo.author_email
+    } : {
+      id: 'system-admin',
+      username: 'Ashley HR Center',
+      email: 'admin@ashleyfurniture.com'
+    };
+
+    const responseData = {
+      id: savedVideo.id,
+      title: savedVideo.title,
+      titleEn: savedVideo.titleEn,
+      category: {
+        id: savedVideo.categoryId,
+        name: savedVideo.category_name,
+        nameCn: savedVideo.category_nameCn,
+        sortOrder: savedVideo.category_sortOrder
+      },
+      book: savedVideo.book_id ? {
+        id: savedVideo.book_id,
+        title: savedVideo.book_title,
+        author: savedVideo.book_author
+      } : undefined,
+      videoUrl: savedVideo.videoUrl,
+      videoUrlEn: savedVideo.videoUrlEn || null,
+      coverUrl: savedVideo.coverUrl,
+      duration: savedVideo.duration || 0,
+      fileSize: savedVideo.fileSize,
+      status: savedVideo.status,
+      disabled: savedVideo.disabled !== 0,
+      viewCount: savedVideo.viewCount || 0,
+      likeCount: savedVideo.likeCount || 0,
+      uploadDate: savedVideo.createdAt ? new Date(savedVideo.createdAt).toISOString().split('T')[0] : null,
+      publishDate: savedVideo.publishDate || null,
+      aiExtractDate: savedVideo.aiExtractDate || null,
+      author: authorData,
+      displayOrder: savedVideo.displayOrder || undefined,
+      reviewNotes: savedVideo.reviewNotes || null,
+      createdAt: savedVideo.createdAt
+    };
+
+    res.status(201).json({
+      success: true,
+      message: 'Video created successfully',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Create video error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create video',
+      error: error.message
+    });
+  }
+});
+
+// 更新视频（通用更新接口，除了category和displayOrder）
+router.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+
+    // 获取视频对象
+    const video = await db.findOne('SELECT * FROM Video WHERE id = ?', [id]);
+    
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // 构建更新数据（排除category和displayOrder，它们有专门的接口）
+    const dbUpdateData = {};
+    if (updateData.title !== undefined) dbUpdateData.title = updateData.title;
+    if (updateData.titleEn !== undefined) dbUpdateData.titleEn = updateData.titleEn;
+    if (updateData.videoUrl !== undefined) dbUpdateData.videoUrl = updateData.videoUrl;
+    if (updateData.videoUrlEn !== undefined) dbUpdateData.videoUrlEn = updateData.videoUrlEn;
+    if (updateData.coverUrl !== undefined) dbUpdateData.coverUrl = updateData.coverUrl;
+    if (updateData.duration !== undefined) dbUpdateData.duration = updateData.duration;
+    if (updateData.fileSize !== undefined) dbUpdateData.fileSize = updateData.fileSize;
+    if (updateData.status !== undefined) dbUpdateData.status = updateData.status;
+    if (updateData.disabled !== undefined) dbUpdateData.disabled = updateData.disabled ? 1 : 0;
+    if (updateData.viewCount !== undefined) dbUpdateData.viewCount = updateData.viewCount;
+    if (updateData.likeCount !== undefined) dbUpdateData.likeCount = updateData.likeCount;
+    if (updateData.bookId !== undefined) dbUpdateData.bookId = updateData.bookId ? parseInt(updateData.bookId) : null;
+    if (updateData.authorId !== undefined) dbUpdateData.authorId = updateData.authorId ? parseInt(updateData.authorId) : null;
+    if (updateData.reviewNotes !== undefined) dbUpdateData.reviewNotes = updateData.reviewNotes;
+    if (updateData.publishDate !== undefined) dbUpdateData.publishDate = updateData.publishDate;
+    if (updateData.aiExtractDate !== undefined) dbUpdateData.aiExtractDate = updateData.aiExtractDate;
+
+    // 执行更新
+    await db.update('Video', dbUpdateData, 'id = ?', [id]);
+
+    console.log(`✅ 视频更新完成: ${id}`);
+
+    // 重新获取更新后的视频
+    const updatedVideo = await db.findOne(
+      `SELECT v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+              b.id as book_id, b.title as book_title, b.author as book_author,
+              u.id as author_id, u.username as author_username, u.email as author_email
+       FROM Video v
+       LEFT JOIN Category c ON v.categoryId = c.id
+       LEFT JOIN Book b ON v.bookId = b.id
+       LEFT JOIN User u ON v.authorId = u.id
+       WHERE v.id = ?`,
+      [id]
+    );
+
+    const authorData = updatedVideo.author_id ? {
+      id: updatedVideo.author_id,
+      username: updatedVideo.author_username,
+      email: updatedVideo.author_email
+    } : {
+      id: 'system-admin',
+      username: 'Ashley HR Center',
+      email: 'admin@ashleyfurniture.com'
+    };
+
+    const responseData = {
+      id: updatedVideo.id,
+      title: updatedVideo.title,
+      titleEn: updatedVideo.titleEn,
+      category: updatedVideo.categoryId ? {
+        id: updatedVideo.categoryId,
+        name: updatedVideo.category_name,
+        nameCn: updatedVideo.category_nameCn,
+        sortOrder: updatedVideo.category_sortOrder
+      } : null,
+      book: updatedVideo.book_id ? {
+        id: updatedVideo.book_id,
+        title: updatedVideo.book_title,
+        author: updatedVideo.book_author
+      } : undefined,
+      videoUrl: updatedVideo.videoUrl,
+      videoUrlEn: updatedVideo.videoUrlEn || null,
+      coverUrl: updatedVideo.coverUrl,
+      duration: updatedVideo.duration || 0,
+      fileSize: updatedVideo.fileSize,
+      status: updatedVideo.status,
+      disabled: updatedVideo.disabled !== 0,
+      viewCount: updatedVideo.viewCount || 0,
+      likeCount: updatedVideo.likeCount || 0,
+      uploadDate: updatedVideo.createdAt ? new Date(updatedVideo.createdAt).toISOString().split('T')[0] : null,
+      publishDate: updatedVideo.publishDate || null,
+      aiExtractDate: updatedVideo.aiExtractDate || null,
+      author: authorData,
+      displayOrder: updatedVideo.displayOrder || undefined,
+      reviewNotes: updatedVideo.reviewNotes || null,
+      createdAt: updatedVideo.createdAt
+    };
+
+    res.json({
+      success: true,
+      message: 'Video updated successfully',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Update video error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update video',
+      error: error.message
+    });
+  }
+});
+
 // 删除视频（使用Master Key绕过ACL）
 router.delete('/:videoId', async (req, res) => {
   try {
@@ -762,10 +946,16 @@ router.delete('/:videoId', async (req, res) => {
       });
     }
 
-    // 使用Master Key删除视频
-    AV.Cloud.useMasterKey();
-    const video = AV.Object.createWithoutData('Video', videoId);
-    await video.destroy({ useMasterKey: true });
+    // 删除视频
+    const video = await db.findOne('SELECT id FROM Video WHERE id = ?', [videoId]);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: '视频不存在'
+      });
+    }
+
+    await db.remove('Video', 'id = ?', [videoId]);
 
     res.json({
       success: true,
@@ -776,6 +966,152 @@ router.delete('/:videoId', async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || '删除失败'
+    });
+  }
+});
+
+// 获取视频播放URL（返回带签名的私有URL，解决CORS和防盗链问题）
+router.get('/:videoId/play-url', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const { lang } = req.query; // 'zh' 或 'en'
+
+    // 获取视频信息
+    const video = await db.findOne('SELECT videoUrl, videoUrlEn FROM Video WHERE id = ?', [videoId]);
+    
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // 根据查询参数选择中文或英文视频
+    const videoUrl = lang === 'en' && video.videoUrlEn ? video.videoUrlEn : video.videoUrl;
+
+    if (!videoUrl) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video URL not found'
+      });
+    }
+
+    // 使用七牛云私有下载URL（带签名，解决CORS和防盗链问题）
+    const { getPrivateDownloadUrl } = require('../utils/fileUpload');
+    const signedUrl = getPrivateDownloadUrl(videoUrl, 3600); // 1小时有效期
+
+    res.json({
+      success: true,
+      data: {
+        videoUrl: signedUrl,
+        expiresIn: 3600
+      }
+    });
+  } catch (error) {
+    console.error('Get video play URL error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get video play URL',
+      error: error.message
+    });
+  }
+});
+
+// 视频代理接口（流式传输，解决CORS和防盗链问题）
+router.get('/proxy/:videoId', async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    const range = req.headers.range;
+    const { lang } = req.query; // 'zh' 或 'en'
+
+    // 获取视频信息
+    const video = await db.findOne('SELECT videoUrl, videoUrlEn FROM Video WHERE id = ?', [videoId]);
+    
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // 根据查询参数选择中文或英文视频
+    const videoUrl = lang === 'en' && video.videoUrlEn ? video.videoUrlEn : video.videoUrl;
+
+    if (!videoUrl) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video URL not found'
+      });
+    }
+
+    // 使用七牛云私有下载URL（带签名）
+    const { getPrivateDownloadUrl } = require('../utils/fileUpload');
+    let signedUrl = getPrivateDownloadUrl(videoUrl, 3600);
+    
+    // 确保URL有效
+    if (!signedUrl || (!signedUrl.startsWith('http://') && !signedUrl.startsWith('https://'))) {
+      console.error('❌ 无效的签名URL:', signedUrl);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate valid video URL',
+        error: 'Invalid signed URL format'
+      });
+    }
+
+    console.log('📹 使用签名URL获取视频:', signedUrl);
+
+    // 从七牛云获取视频
+    const videoResponse = await fetch(signedUrl, {
+      headers: range ? { Range: range } : {}
+    });
+
+    if (!videoResponse.ok && videoResponse.status !== 206) {
+      return res.status(videoResponse.status).json({
+        success: false,
+        message: 'Failed to fetch video from storage'
+      });
+    }
+
+    // 设置CORS响应头
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+
+    // 设置响应头
+    const contentType = videoResponse.headers.get('content-type') || 'video/mp4';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+
+    // 处理范围请求（Range requests）
+    if (videoResponse.status === 206 && range) {
+      const contentRange = videoResponse.headers.get('content-range');
+      const contentLength = videoResponse.headers.get('content-length');
+      
+      if (contentRange) {
+        res.setHeader('Content-Range', contentRange);
+      }
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+      res.status(206);
+    } else {
+      const contentLength = videoResponse.headers.get('content-length');
+      if (contentLength) {
+        res.setHeader('Content-Length', contentLength);
+      }
+    }
+
+    // 流式传输视频数据
+    videoResponse.body.pipe(res);
+  } catch (error) {
+    console.error('Video proxy error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to proxy video',
+      error: error.message
     });
   }
 });

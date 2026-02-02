@@ -1,6 +1,6 @@
 const express = require('express');
 const { query, validationResult } = require('express-validator');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
@@ -15,9 +15,8 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    const sessionToken = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const sessionToken = authHeader.substring(7);
 
-    // 我们的session token格式是: otp-token-{timestamp}-{random}-{userId}
     if (!sessionToken.startsWith('otp-token-')) {
       return res.status(401).json({
         success: false,
@@ -25,14 +24,12 @@ const authenticateUser = async (req, res, next) => {
       });
     }
 
-    // 从token中提取用户ID
     const tokenParts = sessionToken.split('-');
     if (tokenParts.length >= 5) {
-      const userId = tokenParts.slice(4).join('-'); // 处理userId中可能包含的'-'字符
+      const userId = tokenParts.slice(4).join('-');
 
       try {
-        // 从LeanCloud获取用户信息
-        const user = await new AV.Query(AV.User).get(userId);
+        const user = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
         if (user) {
           req.user = user;
           return next();
@@ -71,7 +68,7 @@ router.get('/:videoId/status', async (req, res) => {
           const tokenParts = sessionToken.split('-');
           if (tokenParts.length >= 5) {
             const userId = tokenParts.slice(4).join('-');
-            currentUser = await new AV.Query(AV.User).get(userId);
+            currentUser = await db.findOne('SELECT * FROM User WHERE id = ?', [userId]);
           }
         }
       }
@@ -88,12 +85,11 @@ router.get('/:videoId/status', async (req, res) => {
       });
     }
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Favorite');
-    query.equalTo('user', currentUser);
-    query.equalTo('video', videoPointer);
-
-    const count = await query.count();
+    const result = await db.query(
+      'SELECT COUNT(*) as count FROM Favorite WHERE userId = ? AND videoId = ?',
+      [currentUser.id, videoId]
+    );
+    const count = result[0]?.count || 0;
 
     res.json({
       success: true,
@@ -122,27 +118,33 @@ router.post('/:videoId/toggle', authenticateUser, async (req, res) => {
       });
     }
 
-    const videoPointer = AV.Object.createWithoutData('Video', videoId);
-    const query = new AV.Query('Favorite');
-    query.equalTo('user', currentUser);
-    query.equalTo('video', videoPointer);
+    // 验证视频是否存在
+    const video = await db.findOne('SELECT id FROM Video WHERE id = ?', [videoId]);
+    if (!video) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
 
-    const existingFavorite = await query.first();
+    const existingFavorite = await db.findOne(
+      'SELECT id FROM Favorite WHERE userId = ? AND videoId = ?',
+      [currentUser.id, videoId]
+    );
 
     if (existingFavorite) {
       // 取消收藏
-      await existingFavorite.destroy();
+      await db.remove('Favorite', 'id = ?', [existingFavorite.id]);
       res.json({
         success: true,
         favorited: false
       });
     } else {
       // 收藏
-      const FavoriteClass = AV.Object.extend('Favorite');
-      const favorite = new FavoriteClass();
-      favorite.set('user', currentUser);
-      favorite.set('video', videoPointer);
-      await favorite.save();
+      await db.insert('Favorite', {
+        userId: currentUser.id,
+        videoId: parseInt(videoId)
+      });
       res.json({
         success: true,
         favorited: true
@@ -182,52 +184,56 @@ router.get('/', [
       });
     }
 
-    const query = new AV.Query('Favorite');
-    query.equalTo('user', currentUser);
-    query.include('video');
-    query.include('video.category');
-    query.include('video.author');
-    query.descending('createdAt');
-    query.limit(parseInt(limit));
-    query.skip((parseInt(page) - 1) * parseInt(limit));
+    const sql = `
+      SELECT f.*, v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+             u.id as author_id, u.username as author_username, u.email as author_email, u.createdAt as author_createdAt,
+             u.canPublish as author_canPublish, u.canComment as author_canComment
+      FROM Favorite f
+      LEFT JOIN Video v ON f.videoId = v.id
+      LEFT JOIN Category c ON v.categoryId = c.id
+      LEFT JOIN User u ON v.authorId = u.id
+      WHERE f.userId = ?
+      ORDER BY f.createdAt DESC
+      LIMIT ? OFFSET ?
+    `;
+    const favorites = await db.query(sql, [
+      currentUser.id,
+      parseInt(limit),
+      (parseInt(page) - 1) * parseInt(limit)
+    ]);
 
-    const favorites = await query.find();
-
-    const videoData = favorites.map(fav => {
-      const video = fav.get('video');
-      return {
-        id: video.id,
-        title: video.get('title'),
-        titleEn: video.get('titleEn'),
-        category: {
-          id: video.get('category').id,
-          name: video.get('category').get('name'),
-          nameCn: video.get('category').get('nameCn'),
-          sortOrder: video.get('category').get('sortOrder')
-        },
-        videoUrl: video.get('videoUrl'),
-        coverUrl: video.get('coverUrl'),
-        duration: video.get('duration') || 0,
-        fileSize: video.get('fileSize'),
-        status: video.get('status'),
-        disabled: video.get('disabled'),
-        viewCount: video.get('viewCount') || 0,
-        likeCount: video.get('likeCount') || 0,
-        uploadDate: video.createdAt.toISOString().split('T')[0],
-        publishDate: video.get('publishDate'),
-        author: video.get('author') ? {
-          id: video.get('author').id,
-          username: video.get('author').get('username'),
-          email: video.get('author').get('email'),
-          avatar: video.get('author').get('avatar'),
-          joinDate: video.get('author').createdAt.toISOString().split('T')[0],
-          totalVideos: video.get('author').get('totalVideos') || 0,
-          totalViews: video.get('author').get('totalViews') || 0,
-          canPublish: video.get('author').get('canPublish') !== false,
-          canComment: video.get('author').get('canComment') !== false
-        } : undefined
-      };
-    });
+    const videoData = favorites.map(fav => ({
+      id: fav.id,
+      title: fav.title,
+      titleEn: fav.titleEn,
+      category: fav.categoryId ? {
+        id: fav.categoryId,
+        name: fav.category_name,
+        nameCn: fav.category_nameCn,
+        sortOrder: fav.category_sortOrder
+      } : null,
+      videoUrl: fav.videoUrl,
+      coverUrl: fav.coverUrl,
+      duration: fav.duration || 0,
+      fileSize: fav.fileSize,
+      status: fav.status,
+      disabled: fav.disabled !== 0,
+      viewCount: fav.viewCount || 0,
+      likeCount: fav.likeCount || 0,
+      uploadDate: fav.createdAt ? new Date(fav.createdAt).toISOString().split('T')[0] : null,
+      publishDate: fav.publishDate,
+      author: fav.author_id ? {
+        id: fav.author_id,
+        username: fav.author_username,
+        email: fav.author_email,
+        avatar: null,
+        joinDate: fav.author_createdAt ? new Date(fav.author_createdAt).toISOString().split('T')[0] : null,
+        totalVideos: 0,
+        totalViews: 0,
+        canPublish: fav.author_canPublish !== 0,
+        canComment: fav.author_canComment !== 0
+      } : undefined
+    }));
 
     res.json({
       success: true,

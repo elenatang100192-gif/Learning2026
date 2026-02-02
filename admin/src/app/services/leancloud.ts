@@ -1,5 +1,3 @@
-import AV from 'leancloud-storage';
-
 // 后端API配置（用于某些API调用，支持环境变量）
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
   (import.meta.env.MODE === 'production' 
@@ -7,18 +5,24 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
     : 'http://localhost:3001/api');
 
 // 统一的API请求函数
-const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
+export const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   const url = `${API_BASE_URL}${endpoint}`;
   const isFormData = options.body instanceof FormData;
     
-    // 对于视频生成、AI提取、音频生成等长时间操作，设置更长的超时时间
+    // 对于视频生成、AI提取、音频生成、图片生成等长时间操作，设置更长的超时时间
     const isLongRunningOperation = 
       endpoint.includes('generate-silent-video') || 
       endpoint.includes('generate-video') ||
       endpoint.includes('generate-english-video') || // 英文视频生成也需要更长时间
       endpoint.includes('generate-audio') || // 音频生成需要轮询查询任务状态，可能需要更长时间
+      endpoint.includes('generate-blog-cover') || // 博客封面图生成（AI图片生成+下载+上传）
       endpoint.includes('/extract'); // AI提取也需要更长时间
     const timeout = isLongRunningOperation ? 15 * 60 * 1000 : 30000; // 长时间操作15分钟，其他30秒
+    
+    // 调试日志：确认超时设置
+    if (endpoint.includes('generate-blog-cover')) {
+      console.log(`⏱️ generate-blog-cover 超时设置: ${timeout / 1000}秒 (${timeout / 60000}分钟)`);
+    }
   
   const config: RequestInit = {
     headers: {
@@ -29,7 +33,10 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   };
 
   // 添加认证token（如果存在）
-  const token = localStorage.getItem('sessionToken');
+  // 优先使用adminSessionToken（后台管理），否则使用sessionToken（普通用户）
+  const adminToken = localStorage.getItem('adminSessionToken');
+  const userToken = localStorage.getItem('sessionToken');
+  const token = adminToken || userToken;
   if (token) {
     config.headers = {
       ...config.headers,
@@ -48,18 +55,29 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
       });
       
       clearTimeout(timeoutId);
+      
+      // 读取响应文本（只能读取一次）
+      const responseText = await response.text();
+      let responseData: any;
+      
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error('❌ 响应解析失败:', responseText);
+        throw new Error('Invalid response format');
+      }
+      
+      // 调试日志
+      if (url.includes('send-otp')) {
+        console.log('📧 发送验证码API响应:', responseData);
+        if (responseData.success && responseData.otp) {
+          console.log('✅ 验证码:', responseData.otp);
+        }
+      }
 
     if (!response.ok) {
-      let errorData: any = {};
-      try {
-        const text = await response.text();
-        if (text) {
-          errorData = JSON.parse(text);
-        }
-      } catch (e) {
-        // 如果解析失败，使用空对象
-        errorData = {};
-      }
+      // 响应已经在上面解析了
+      const errorData = responseData || {};
       
       // 特殊处理429速率限制错误
       if (response.status === 429) {
@@ -75,7 +93,8 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
       throw error;
     }
 
-    return response.json();
+    // 返回已解析的数据（不能再次调用 response.json()）
+    return responseData;
   } catch (error: any) {
     // 特殊处理AbortError（超时错误）- 优先处理
     if (error.name === 'AbortError') {
@@ -113,31 +132,7 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
   }
 };
 
-// LeanCloud配置
-const LEANCLOUD_CONFIG = {
-  appId: import.meta.env.VITE_LEANCLOUD_APP_ID || 'RDeCDLtbY5VWuuVuOV8GUfbl-gzGzoHsz',
-  appKey: import.meta.env.VITE_LEANCLOUD_APP_KEY || '1w0cQLBZIaJ32tjaU7RkDu3n',
-  serverURL: import.meta.env.VITE_LEANCLOUD_SERVER_URL || 'https://rdecdltb.lc-cn-n1-shared.com'
-};
-
-// 初始化LeanCloud
-let isInitialized = false;
-
-export const initLeanCloud = () => {
-  if (!isInitialized) {
-    try {
-      // 检查是否已经初始化
-      if (!AV.applicationId) {
-    AV.init(LEANCLOUD_CONFIG);
-      }
-      isInitialized = true;
-    } catch (error) {
-      // 如果已经初始化，忽略错误
-      console.warn('LeanCloud already initialized:', error);
-    isInitialized = true;
-    }
-  }
-};
+// LeanCloud已禁用，所有操作都通过后端API
 
 // 数据类型定义
 export interface Category {
@@ -227,147 +222,79 @@ export interface StatisticsData {
   pendingAudits: number;
 }
 
-// 基础查询函数
-export const createQuery = (className: string) => {
-  return new AV.Query(className);
-};
+// LeanCloud已禁用，不再需要查询函数
 
 // 分类相关API
 export const categoryAPI = {
-  // 获取所有分类
+  // 获取所有分类（通过后端API）
   async getAll() {
     try {
-      initLeanCloud();
-      const query = createQuery('Category');
-      query.ascending('sortOrder');
-      const results = await query.find();
-      return results.map(item => ({
-        id: item.id,
-        name: item.get('name'),
-        nameCn: item.get('nameCn'),
-        sortOrder: item.get('sortOrder'),
-        createdAt: item.createdAt
-      })) as Category[];
+      const response = await apiRequest('/categories');
+      return response.success ? response.data : [];
     } catch (error: any) {
       console.error('获取分类列表失败:', error);
-      
-      // 提供更详细的错误信息
-      if (error?.code === 1) {
-        throw new Error('权限不足，无法访问分类数据。请检查LeanCloud配置或联系管理员');
-      } else if (error?.code === 101) {
-        throw new Error('LeanCloud应用配置错误，请检查App ID和App Key');
-      } else if (error?.message) {
-        throw new Error(`获取分类列表失败: ${error.message}`);
-      } else {
-        throw new Error('获取分类列表失败，请检查网络连接或LeanCloud配置');
-      }
+      throw error;
     }
   },
 
-  // 根据名称获取分类
+  // 根据名称获取分类（通过后端API）
   async getByName(name: string) {
-    initLeanCloud();
-    const query = createQuery('Category');
-    query.equalTo('name', name);
-    const result = await query.first();
-    if (!result) return null;
-    return {
-      id: result.id,
-      name: result.get('name'),
-      nameCn: result.get('nameCn'),
-      sortOrder: result.get('sortOrder'),
-      createdAt: result.createdAt
-    } as Category;
+    try {
+      const response = await apiRequest(`/categories/${encodeURIComponent(name)}`);
+      return response.success ? response.data : null;
+    } catch (error: any) {
+      console.error('获取分类失败:', error);
+      if (error.message && error.message.includes('404')) {
+        return null;
+      }
+      throw error;
+    }
   }
 };
 
 // 书籍相关API
 export const bookAPI = {
-  // 获取书籍列表
+  // 获取书籍列表（通过后端API）
   async getList(filters: any = {}, page: number = 1, limit: number = 20) {
     try {
-      initLeanCloud();
-      const query = createQuery('Book');
-
-      // 应用筛选条件
-      if (filters.title) {
-        query.contains('title', filters.title);
-      }
-      if (filters.author) {
-        query.contains('author', filters.author);
-      }
-      if (filters.category) {
-        const category = AV.Object.createWithoutData('Category', filters.category);
-        query.equalTo('category', category);
-      }
-      if (filters.status) {
-        query.equalTo('status', filters.status);
-      }
-
-      // 分页
-      query.limit(limit);
-      query.skip((page - 1) * limit);
-      query.descending('createdAt');
-
-      // 关联查询分类信息
-      query.include('category');
-
-      const results = await query.find();
-      return results.map(item => ({
-        id: item.id,
-        title: item.get('title'),
-        author: item.get('author'),
-        isbn: item.get('isbn'),
-        category: item.get('category') ? {
-          id: item.get('category').id,
-          name: item.get('category').get('name'),
-          nameCn: item.get('category').get('nameCn'),
-          sortOrder: item.get('category').get('sortOrder')
-        } : undefined,
-        coverUrl: item.get('coverUrl'),
-        blogCoverUrl: item.get('blogCoverUrl'),
-        fileUrl: item.get('fileUrl'),
-        uploadDate: item.get('uploadDate'),
-        status: item.get('status'),
-        createdAt: item.createdAt
-      })) as Book[];
+      // 构建查询参数
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
+      if (filters.title) params.append('title', filters.title);
+      if (filters.author) params.append('author', filters.author);
+      if (filters.category) params.append('category', filters.category);
+      if (filters.status) params.append('status', filters.status);
+      
+      const response = await apiRequest(`/books?${params.toString()}`);
+      return response.success ? response.data : [];
     } catch (error: any) {
       console.error('获取书籍列表失败:', error);
-      
-      // 提供更详细的错误信息
-      if (error?.code === 1) {
-        throw new Error('权限不足，无法访问书籍数据。请检查LeanCloud配置或联系管理员');
-      } else if (error?.code === 101) {
-        throw new Error('LeanCloud应用配置错误，请检查App ID和App Key');
-      } else if (error?.message) {
-        throw new Error(`获取书籍列表失败: ${error.message}`);
-      } else {
-        throw new Error('获取书籍列表失败，请检查网络连接或LeanCloud配置');
-      }
+      throw error;
     }
   },
 
-  // 创建书籍
+  // 创建书籍（通过后端API）
   async create(bookData: Omit<Book, 'id' | 'createdAt'>) {
-    initLeanCloud();
-    const BookClass = AV.Object.extend('Book');
-    const book = new BookClass();
-
-    book.set('title', bookData.title);
-    book.set('author', bookData.author);
-    book.set('isbn', bookData.isbn);
-    book.set('category', AV.Object.createWithoutData('Category', bookData.category.id));
-    book.set('coverUrl', bookData.coverUrl);
-    book.set('fileUrl', bookData.fileUrl);
-    book.set('uploadDate', bookData.uploadDate);
-    book.set('status', bookData.status);
-
-    const result = await book.save();
-    return {
-      id: result.id,
-      ...bookData,
-      createdAt: result.createdAt
-    } as Book;
+    try {
+      const response = await apiRequest('/books', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: bookData.title,
+          author: bookData.author,
+          isbn: bookData.isbn,
+          categoryId: bookData.category.id,
+          coverUrl: bookData.coverUrl,
+          fileUrl: bookData.fileUrl,
+          uploadDate: bookData.uploadDate,
+          status: bookData.status
+        }),
+      });
+      return response.success ? response.data : null;
+    } catch (error) {
+      console.error('创建书籍失败:', error);
+      throw error;
+    }
   },
 
   // 更新书籍（通过后端API，使用Master Key绕过ACL）
@@ -406,29 +333,15 @@ export const bookAPI = {
     }
   },
 
-  // 获取书籍详情
+  // 获取书籍详情（通过后端API）
   async getById(id: string) {
-    initLeanCloud();
-    const query = createQuery('Book');
-    query.include('category');
-    const book = await query.get(id);
-    return {
-      id: book.id,
-      title: book.get('title'),
-      author: book.get('author'),
-      isbn: book.get('isbn'),
-      category: book.get('category') ? {
-        id: book.get('category').id,
-        name: book.get('category').get('name'),
-        nameCn: book.get('category').get('nameCn'),
-        sortOrder: book.get('category').get('sortOrder')
-      } : undefined,
-      coverUrl: book.get('coverUrl'),
-      fileUrl: book.get('fileUrl'),
-      uploadDate: book.get('uploadDate'),
-      status: book.get('status'),
-      createdAt: book.createdAt
-    } as Book;
+    try {
+      const response = await apiRequest(`/books/${id}`);
+      return response.success ? response.data : null;
+    } catch (error) {
+      console.error('获取书籍详情失败:', error);
+      throw error;
+    }
   },
 
   // 上传电子书文件（支持进度回调）
@@ -705,97 +618,58 @@ export const bookAPI = {
 
 // 视频相关API
 export const videoAPI = {
-  // 获取视频列表
+  // 获取视频列表（通过后端API）
   async getList(filters: any = {}, page: number = 1, limit: number = 20) {
-    initLeanCloud();
-    const query = createQuery('Video');
-
-    // 应用筛选条件
-    if (filters.status) {
-      query.equalTo('status', filters.status);
+    try {
+      // 构建查询参数
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
+      if (filters.status !== undefined) params.append('status', filters.status);
+      if (filters.category) params.append('category', filters.category);
+      if (filters.title) params.append('title', filters.title);
+      
+      const response = await apiRequest(`/videos?${params.toString()}`);
+      return response.success ? response.data : [];
+    } catch (error: any) {
+      console.error('获取视频列表失败:', error);
+      throw error;
     }
-    if (filters.category) {
-      const category = AV.Object.createWithoutData('Category', filters.category);
-      query.equalTo('category', category);
-    }
-    if (filters.title) {
-      query.contains('title', filters.title);
-    }
-
-    // 分页和排序
-    query.limit(limit);
-    query.skip((page - 1) * limit);
-    // 优先按displayOrder排序（升序，null值会被放在最后），然后按createdAt排序（降序）
-    // 注意：LeanCloud会先按displayOrder排序，对于displayOrder相同的记录再按createdAt排序
-    query.addAscending('displayOrder');
-    query.descending('createdAt');
-
-    // 关联查询
-    query.include('category');
-    query.include('book');
-    query.include('author');
-
-    const results = await query.find();
-    return results.map(item => ({
-      id: item.id,
-      title: item.get('title'),
-      titleEn: item.get('titleEn'),
-      category: item.get('category') ? {
-        id: item.get('category').id,
-        name: item.get('category').get('name'),
-        nameCn: item.get('category').get('nameCn')
-      } : undefined,
-      book: item.get('book') ? {
-        id: item.get('book').id,
-        title: item.get('book').get('title'),
-        author: item.get('book').get('author')
-      } : undefined,
-      videoUrl: item.get('videoUrl'),
-      videoUrlEn: item.get('videoUrlEn'),
-      coverUrl: item.get('coverUrl'),
-      duration: item.get('duration'),
-      fileSize: item.get('fileSize'),
-      status: item.get('status'),
-      disabled: item.get('disabled') || false,
-      viewCount: item.get('viewCount') || 0,
-      likeCount: item.get('likeCount') || 0,
-      uploadDate: item.get('uploadDate'),
-      publishDate: item.get('publishDate'),
-      aiExtractDate: item.get('aiExtractDate'),
-      author: item.get('author') ? {
-        id: item.get('author').id,
-        email: item.get('author').get('email')
-      } : undefined,
-      reviewNotes: item.get('reviewNotes'),
-      displayOrder: item.get('displayOrder') || undefined,
-      createdAt: item.createdAt
-    })) as Video[];
   },
 
-  // 创建视频（后台发布）
+  // 创建视频（通过后端API）
   async create(videoData: Omit<Video, 'id' | 'createdAt'>) {
-    initLeanCloud();
-    const VideoClass = AV.Object.extend('Video');
-    const video = new VideoClass();
+    try {
+      const requestData: any = {
+        title: videoData.title,
+        titleEn: videoData.titleEn,
+        categoryId: videoData.category?.id,
+        bookId: videoData.book?.id,
+        videoUrl: videoData.videoUrl,
+        videoUrlEn: videoData.videoUrlEn,
+        coverUrl: videoData.coverUrl,
+        duration: videoData.duration,
+        fileSize: videoData.fileSize,
+        status: videoData.status,
+        disabled: videoData.disabled,
+        viewCount: videoData.viewCount,
+        likeCount: videoData.likeCount,
+        authorId: videoData.author?.id,
+        displayOrder: videoData.displayOrder,
+        reviewNotes: videoData.reviewNotes,
+        publishDate: videoData.publishDate,
+        aiExtractDate: videoData.aiExtractDate
+      };
 
-    Object.keys(videoData).forEach(key => {
-      if (key === 'category' && videoData.category) {
-        video.set('category', AV.Object.createWithoutData('Category', videoData.category.id));
-      } else if (key === 'book' && videoData.book) {
-        video.set('book', AV.Object.createWithoutData('Book', videoData.book.id));
-      } else if (key === 'author' && videoData.author) {
-        video.set('author', AV.Object.createWithoutData('_User', videoData.author.id));
-      } else if (key !== 'id' && key !== 'createdAt') {
-        video.set(key, (videoData as any)[key]);
-      }
-    });
-
-    const result = await video.save();
-    return {
-      id: result.id,
-      ...videoData,
-      createdAt: result.createdAt
-    } as Video;
+      const response = await apiRequest('/videos', {
+        method: 'POST',
+        body: JSON.stringify(requestData),
+      });
+      return response.success ? response.data : null;
+    } catch (error) {
+      console.error('创建视频失败:', error);
+      throw error;
+    }
   },
 
   // 更新视频
@@ -846,26 +720,35 @@ export const videoAPI = {
       }
     }
 
-    // 其他更新操作仍然使用LeanCloud SDK（如果有权限）
-    initLeanCloud();
-    const video = AV.Object.createWithoutData('Video', id);
+    // 其他更新操作使用后端API
+    try {
+      const updateData: any = {};
+      if (videoData.title !== undefined) updateData.title = videoData.title;
+      if (videoData.titleEn !== undefined) updateData.titleEn = videoData.titleEn;
+      if (videoData.videoUrl !== undefined) updateData.videoUrl = videoData.videoUrl;
+      if (videoData.videoUrlEn !== undefined) updateData.videoUrlEn = videoData.videoUrlEn;
+      if (videoData.coverUrl !== undefined) updateData.coverUrl = videoData.coverUrl;
+      if (videoData.duration !== undefined) updateData.duration = videoData.duration;
+      if (videoData.fileSize !== undefined) updateData.fileSize = videoData.fileSize;
+      if (videoData.status !== undefined) updateData.status = videoData.status;
+      if (videoData.disabled !== undefined) updateData.disabled = videoData.disabled;
+      if (videoData.viewCount !== undefined) updateData.viewCount = videoData.viewCount;
+      if (videoData.likeCount !== undefined) updateData.likeCount = videoData.likeCount;
+      if (videoData.book !== undefined) updateData.bookId = videoData.book?.id;
+      if (videoData.author !== undefined) updateData.authorId = videoData.author?.id;
+      if (videoData.reviewNotes !== undefined) updateData.reviewNotes = videoData.reviewNotes;
+      if (videoData.publishDate !== undefined) updateData.publishDate = videoData.publishDate;
+      if (videoData.aiExtractDate !== undefined) updateData.aiExtractDate = videoData.aiExtractDate;
 
-    Object.keys(videoData).forEach(key => {
-      if (key === 'category' && videoData.category) {
-        video.set('category', AV.Object.createWithoutData('Category', videoData.category.id));
-      } else if (key === 'book' && videoData.book) {
-        video.set('book', AV.Object.createWithoutData('Book', videoData.book.id));
-      } else if (key !== 'id' && key !== 'createdAt') {
-        video.set(key, videoData[key as keyof Video]);
-      }
-    });
-
-    const result = await video.save();
-    return {
-      id: result.id,
-      ...videoData,
-      createdAt: result.createdAt
-    } as Video;
+      const response = await apiRequest(`/videos/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData),
+      });
+      return response.success ? response.data : null;
+    } catch (error) {
+      console.error('更新视频失败:', error);
+      throw error;
+    }
   },
 
   // 审核视频（通过后端API，使用Master Key绕过ACL）
@@ -1040,6 +923,30 @@ export const videoAPI = {
       console.error('删除视频失败:', error);
       throw error;
     }
+  },
+
+  // 获取视频播放URL（使用代理接口，解决CORS和防盗链问题）
+  async getPlayUrl(videoId: string, lang: 'zh' | 'en' = 'zh'): Promise<string | null> {
+    try {
+      const response = await apiRequest(`/videos/${videoId}/play-url?lang=${lang}`);
+      if (response.success && response.data?.videoUrl) {
+        return response.data.videoUrl;
+      }
+      return null;
+    } catch (error) {
+      console.error('获取视频播放URL失败:', error);
+      // 如果获取失败，返回null，前端可以使用原始URL
+      return null;
+    }
+  },
+
+  // 获取视频代理URL（用于预览和下载）
+  getProxyUrl(videoId: string, lang: 'zh' | 'en' = 'zh'): string {
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+      (import.meta.env.MODE === 'production' 
+        ? 'https://video-app-backend-215072-7-1319956699.sh.run.tcloudbase.com/api'
+        : 'http://localhost:3001/api');
+    return `${API_BASE_URL}/videos/proxy/${videoId}?lang=${lang}`;
   }
 };
 
@@ -1049,8 +956,10 @@ export const userAPI = {
   async createUser(userData: {
     email: string;
     username?: string;
+    password?: string;
     canPublish?: boolean;
     canComment?: boolean;
+    canAdmin?: boolean;
   }) {
     try {
       const response = await apiRequest('/users', {
@@ -1079,33 +988,35 @@ export const userAPI = {
     }
   },
 
-  // 获取用户统计（从StatisticsDaily表获取，避免直接查询User表）
+  // 获取用户统计（通过后端API）
   async getStats() {
-    initLeanCloud();
-    const query = createQuery('StatisticsDaily');
-    query.descending('date');
-    const latestStats = await query.first();
-
-    if (latestStats) {
+    try {
+      // 从用户列表统计用户数
+      const response = await apiRequest('/users?page=1&limit=1');
+      const totalUsers = response.success && response.pagination ? response.pagination.total : 0;
+      
       return {
-        totalUsers: latestStats.get('totalUsers') || 0,
-        newUsersToday: 0, // StatisticsDaily表中没有每日新增用户的字段，这里暂时设为0
-        activeUsers: Math.floor((latestStats.get('totalUsers') || 0) * 0.3) // 估算活跃用户数
+        totalUsers: totalUsers,
+        newUsersToday: 0, // 暂时设为0，后续可以从后端API获取
+        activeUsers: Math.floor(totalUsers * 0.3) // 估算活跃用户数
+      };
+    } catch (error) {
+      console.error('获取用户统计失败:', error);
+      // 如果失败，返回默认值
+      return {
+        totalUsers: 0,
+        newUsersToday: 0,
+        activeUsers: 0
       };
     }
-
-    // 如果没有统计数据，返回默认值
-    return {
-      totalUsers: 0,
-      newUsersToday: 0,
-      activeUsers: 0
-    };
   },
 
   // 修改用户权限（通过后端API）
   async updatePermissions(userId: string, permissions: {
     canPublish?: boolean;
     canComment?: boolean;
+    canAdmin?: boolean;
+    password?: string;
   }) {
     try {
       const response = await apiRequest(`/users/${userId}/permissions`, {
@@ -1133,17 +1044,40 @@ export const userAPI = {
   }
 };
 
-// 统计相关API
+// 统计相关API（通过后端API计算）
 export const statisticsAPI = {
-  // 获取统计数据
+  // 获取统计数据（通过后端API计算）
   async getLatest() {
-    initLeanCloud();
-    const query = createQuery('StatisticsDaily');
-    query.descending('date');
-    query.limit(1);
+    try {
+      // 从各个API获取统计数据
+      const [usersResponse, videosResponse] = await Promise.all([
+        apiRequest('/users?page=1&limit=1'),
+        apiRequest('/videos?page=1&limit=1000')
+      ]);
 
-    const result = await query.first();
-    if (!result) {
+      const totalUsers = usersResponse.success && usersResponse.pagination ? usersResponse.pagination.total : 0;
+      const videos = videosResponse.success ? videosResponse.data : [];
+      
+      const publishedVideos = videos.filter((v: Video) => v.status === '已发布');
+      const pendingAudits = videos.filter((v: Video) => v.status === '待审核');
+      const totalViews = videos.reduce((sum: number, v: Video) => sum + (v.viewCount || 0), 0);
+      const totalLikes = videos.reduce((sum: number, v: Video) => sum + (v.likeCount || 0), 0);
+
+      return {
+        date: new Date().toISOString().split('T')[0],
+        totalUsers: totalUsers,
+        activeUsers: Math.floor(totalUsers * 0.3),
+        newUsers: 0,
+        totalVideos: videos.length,
+        newVideos: 0,
+        publishedVideos: publishedVideos.length,
+        totalViews: totalViews,
+        totalLikes: totalLikes,
+        totalComments: 0,
+        pendingAudits: pendingAudits.length
+      } as StatisticsData;
+    } catch (error) {
+      console.error('获取统计数据失败:', error);
       return {
         date: new Date().toISOString().split('T')[0],
         totalUsers: 0,
@@ -1158,47 +1092,11 @@ export const statisticsAPI = {
         pendingAudits: 0
       } as StatisticsData;
     }
-
-    return {
-      date: result.get('date'),
-      totalUsers: result.get('totalUsers') || 0,
-      activeUsers: result.get('activeUsers') || 0,
-      newUsers: result.get('newUsers') || 0,
-      totalVideos: result.get('totalVideos') || 0,
-      newVideos: result.get('newVideos') || 0,
-      publishedVideos: result.get('publishedVideos') || 0,
-      totalViews: result.get('totalViews') || 0,
-      totalLikes: result.get('totalLikes') || 0,
-      totalComments: result.get('totalComments') || 0,
-      pendingAudits: result.get('pendingAudits') || 0
-    } as StatisticsData;
   },
 
-  // 更新统计数据
+  // 更新统计数据（暂时不支持，统计数据通过实时计算）
   async update(statsData: Partial<StatisticsData>) {
-    initLeanCloud();
-    const today = new Date().toISOString().split('T')[0];
-
-    // 先查找今天的数据
-    const query = createQuery('StatisticsDaily');
-    query.equalTo('date', today);
-    let stats = await query.first();
-
-    if (!stats) {
-      // 创建新记录
-      const StatsClass = AV.Object.extend('StatisticsDaily');
-      stats = new StatsClass();
-      stats.set('date', today);
-    }
-
-    // 更新数据
-    Object.keys(statsData).forEach(key => {
-      if (key !== 'date' && key !== 'id') {
-        stats.set(key, statsData[key as keyof StatisticsData]);
-      }
-    });
-
-    await stats.save();
+    console.warn('统计数据更新功能已禁用，统计数据通过实时计算');
     return { success: true };
   }
 };
@@ -1245,7 +1143,6 @@ export const dashboardAPI = {
 };
 
 export default {
-  initLeanCloud,
   categoryAPI,
   bookAPI,
   videoAPI,

@@ -1,20 +1,18 @@
 const express = require('express');
-const AV = require('leancloud-storage');
+const db = require('../utils/db');
 
 const router = express.Router();
 
 // 获取所有分类
 router.get('/', async (req, res) => {
   try {
-    const query = new AV.Query('Category');
-    query.ascending('sortOrder');
-    const categories = await query.find();
+    const categories = await db.findAll('SELECT * FROM Category ORDER BY sortOrder ASC');
 
     const categoryData = categories.map(cat => ({
       id: cat.id,
-      name: cat.get('name'),
-      nameCn: cat.get('nameCn'),
-      sortOrder: cat.get('sortOrder')
+      name: cat.name,
+      nameCn: cat.nameCn,
+      sortOrder: cat.sortOrder
     }));
 
     res.json({
@@ -26,6 +24,40 @@ router.get('/', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to get categories'
+    });
+  }
+});
+
+// 根据名称获取分类
+router.get('/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+
+    const category = await db.findOne('SELECT * FROM Category WHERE name = ? OR nameCn = ?', [name, name]);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: 'Category not found'
+      });
+    }
+
+    const categoryData = {
+      id: category.id,
+      name: category.name,
+      nameCn: category.nameCn,
+      sortOrder: category.sortOrder
+    };
+
+    res.json({
+      success: true,
+      data: categoryData
+    });
+  } catch (error) {
+    console.error('Get category by name error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get category'
     });
   }
 });

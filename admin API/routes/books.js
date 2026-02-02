@@ -6,9 +6,10 @@ if (!process.env.DASHSCOPE_API_KEY && !process.env.ALIYUN_API_KEY) {
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
-const AV = require('leancloud-storage');
-const tencentcloud = require('tencentcloud-sdk-nodejs');
-const OSS = require('ali-oss');
+const db = require('../utils/db');
+const { uploadFile } = require('../utils/fileUpload');
+// const tencentcloud = require('tencentcloud-sdk-nodejs'); // 已禁用：腾讯云TTS服务已禁用
+const qiniu = require('qiniu');
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs').promises;
 const path = require('path');
@@ -26,13 +27,18 @@ const upload = multer({
 });
 
 // API配置（从环境变量读取）
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'sk-0abbe78f54d84a7f8a91c1e36bce0a97';
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
+// 注意：Deepseek配置已不再使用，所有功能已迁移到阿里云DashScope qwen-long-latest
+// const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'sk-0abbe78f54d84a7f8a91c1e36bce0a97';
+// const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
+
+// 阿里云DashScope文件上传和模型API配置
+const DASHSCOPE_FILES_API_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/files';
+const DASHSCOPE_CHAT_API_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
 
 // 阿里云百炼（DashScope）API配置
 // 环境变量名：DASHSCOPE_API_KEY（符合阿里云官方文档规范）
 // 文档：https://bailian.console.aliyun.com/?tab=api#/api/?type=model&url=2803795
-const ALIYUN_API_KEY = process.env.DASHSCOPE_API_KEY || process.env.ALIYUN_API_KEY || 'sk-7d830956ecb642349f40833295dfd04c';
+const ALIYUN_API_KEY = process.env.DASHSCOPE_API_KEY || process.env.ALIYUN_API_KEY || 'sk-abe50fde91f242a682c8c6c189310db5';
 
 // 验证API Key是否已加载
 if (!ALIYUN_API_KEY || ALIYUN_API_KEY.length < 20) {
@@ -45,21 +51,26 @@ if (!ALIYUN_API_KEY || ALIYUN_API_KEY.length < 20) {
 const ALIYUN_IMAGE_GEN_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 const ALIYUN_FACE_DETECT_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/image2video/face-detect';
 const ALIYUN_VIDEO_GEN_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/image2video/generation';
-// Doubao-Seedance-1.5-pro API配置（视频生成）
+// Qwen TTS使用HTTP SSE API
+// 参考文档：根据用户提供的示例
+const ALIYUN_TTS_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+// Doubao-Seedance-1.5-pro API配置（视频生成）- 已禁用
+// 注意：豆包视频生成服务已禁用
 // 根据README.md配置：
 // DOUBAO_MODEL_ID：doubao-seedance-1-5-pro-251215
 // API Key：866a3f1e-a011-4f07-a5a8-01cd771f8552
 // 文档: https://www.volcengine.com/docs/82379/1520758?lang=zh
-const DOUBAO_API_KEY = process.env.ARK_API_KEY || process.env.DOUBAO_API_KEY || '866a3f1e-a011-4f07-a5a8-01cd771f8552';
+// const DOUBAO_API_KEY = process.env.ARK_API_KEY || process.env.DOUBAO_API_KEY || '866a3f1e-a011-4f07-a5a8-01cd771f8552';
 // 模型ID：doubao-seedance-1-5-pro-251215
-const DOUBAO_MODEL_ID = process.env.DOUBAO_MODEL_ID || 'doubao-seedance-1-5-pro-251215';
+// const DOUBAO_MODEL_ID = process.env.DOUBAO_MODEL_ID || 'doubao-seedance-1-5-pro-251215';
 // volcengine API端点（视频生成）
-const DOUBAO_TEXT_TO_VIDEO_URL = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
-const DOUBAO_TASK_STATUS_URL = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+// const DOUBAO_TEXT_TO_VIDEO_URL = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
+// const DOUBAO_TASK_STATUS_URL = 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks';
 
-// Doubao-Seedream-4-0 API配置（图片生成）- 已替换为 OpenAI DALL-E
+// Doubao-Seedream-4-0 API配置（图片生成）- 已替换为阿里云 DashScope
 // 模型ID：doubao-seedream-4-0-250828
 // API端点：https://ark.cn-beijing.volces.com/api/v3/images/generations
+// 注意：图片生成功能已迁移到阿里云 DashScope (qwen-image-max)
 const DOUBAO_IMAGE_GEN_URL = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
 const DOUBAO_IMAGE_MODEL_ID = process.env.DOUBAO_IMAGE_MODEL_ID || 'doubao-seedream-4-0-250828';
 
@@ -117,28 +128,24 @@ if (OPENAI_ENDPOINT && OPENAI_DEPLOYMENT_NAME && !OPENAI_ENDPOINT.includes('your
 // const DOUBAO_TTS_API_URL = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
 // const DOUBAO_TTS_RESOURCE_ID = process.env.DOUBAO_TTS_RESOURCE_ID || 'seed-tts-1.0';
 
-// 阿里云OSS配置（从环境变量读取，必须配置）
-const OSS_REGION = process.env.OSS_REGION || 'oss-cn-hangzhou';
-const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID;
-const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET;
-const OSS_BUCKET = process.env.OSS_BUCKET || 'knowledge-video-app';
+// 七牛云存储配置
+const QINIU_URL = process.env.QINIU_URL || 'https://trainspace.ashgso.com';
+const QINIU_BUCKET = process.env.QINIU_BUCKET || 'trainspace';
+const QINIU_ACCESS_KEY = process.env.QINIU_ACCESS_KEY || 'LovYLFiZZuPFtvGLTjlCXe3l7YcJq3yEmsCOBpSU';
+const QINIU_SECRET_KEY = process.env.QINIU_SECRET_KEY || 'ISfANLfFxsgWn0cFlZD2jLlmEbBV4QSnjW5Y_55u';
 
-if (!OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET) {
-  console.error('❌ 警告：阿里云OSS AccessKey未配置，请设置OSS_ACCESS_KEY_ID和OSS_ACCESS_KEY_SECRET环境变量');
+if (!QINIU_ACCESS_KEY || !QINIU_SECRET_KEY) {
+  console.error('❌ 警告：七牛云AccessKey未配置，请设置QINIU_ACCESS_KEY和QINIU_SECRET_KEY环境变量');
 }
 
-// 初始化OSS客户端（使用secure: true确保使用HTTPS）
-const ossClient = new OSS({
-  region: OSS_REGION,
-  accessKeyId: OSS_ACCESS_KEY_ID,
-  accessKeySecret: OSS_ACCESS_KEY_SECRET,
-  bucket: OSS_BUCKET,
-  secure: true  // 使用HTTPS
-});
+// 初始化七牛云配置
+const qiniuConfig = new qiniu.conf.Config();
+qiniuConfig.zone = qiniu.zone.Zone_z0; // 华东区域
+const mac = new qiniu.auth.digest.Mac(QINIU_ACCESS_KEY, QINIU_SECRET_KEY);
 
-console.log('✅ 阿里云OSS客户端已初始化，Bucket:', OSS_BUCKET, 'Region:', OSS_REGION, 'Secure: true (HTTPS)');
+console.log('✅ 七牛云存储客户端已初始化，Bucket:', QINIU_BUCKET, 'URL:', QINIU_URL);
 
-// 辅助函数：将文件从URL下载并上传到OSS
+// 辅助函数：将文件从URL下载并上传到七牛云存储
 async function uploadToOSS(fileUrl, fileName, contentType) {
   try {
     console.log('📥 开始下载文件:', fileUrl);
@@ -152,83 +159,85 @@ async function uploadToOSS(fileUrl, fileName, contentType) {
     const buffer = Buffer.from(await response.arrayBuffer());
     console.log('✅ 文件下载完成，大小:', buffer.length, 'bytes');
     
-    // 上传到OSS
-    const ossPath = `video-generation/${Date.now()}_${fileName}`;
-    console.log('📤 上传文件到OSS:', ossPath);
+    // 上传到七牛云
+    const qiniuPath = `video-generation/${Date.now()}_${fileName}`;
+    console.log('📤 上传文件到七牛云:', qiniuPath);
     
-    // 上传文件到OSS，并设置ACL为公共读（确保阿里云API可以访问）
-    const result = await ossClient.put(ossPath, buffer, {
-      contentType: contentType || 'application/octet-stream',
-      headers: {
-        'Cache-Control': 'public, max-age=31536000'
-      },
-      // 设置ACL为公共读，确保文件可以被公开访问
-      acl: 'public-read'
+    // 生成上传凭证
+    const putPolicy = new qiniu.rs.PutPolicy({
+      scope: `${QINIU_BUCKET}:${qiniuPath}`,
     });
+    const uploadToken = putPolicy.uploadToken(mac);
     
-    // 确保返回HTTPS URL（阿里云API可能需要HTTPS）
-    let finalUrl = result.url;
-    if (finalUrl && finalUrl.startsWith('http://')) {
-      finalUrl = finalUrl.replace('http://', 'https://');
-      console.log('🔧 将OSS URL从HTTP转换为HTTPS');
-    }
+    // 配置上传参数
+    const formUploader = new qiniu.form_up.FormUploader(qiniuConfig);
+    const putExtra = new qiniu.form_up.PutExtra();
     
-    // 验证URL是否可以访问（等待文件同步）
-    console.log('⏳ 等待文件同步...');
-    await new Promise(resolve => setTimeout(resolve, 1000)); // 等待1秒
-    
-    // 验证URL可访问性
-    try {
-      const checkResponse = await fetch(finalUrl, { method: 'HEAD' });
-      if (!checkResponse.ok) {
-        console.warn('⚠️ OSS URL可能无法访问:', finalUrl, '状态码:', checkResponse.status);
-        // 如果HEAD失败，尝试GET请求
-        const getResponse = await fetch(finalUrl, { method: 'GET', headers: { 'Range': 'bytes=0-0' } });
-        if (!getResponse.ok) {
-          throw new Error(`OSS URL无法访问: ${finalUrl}, 状态码: ${getResponse.status}`);
-        } else {
-          console.log('✅ OSS URL可访问（通过GET请求验证）:', finalUrl);
+    // 上传文件
+    return new Promise((resolve, reject) => {
+      formUploader.put(uploadToken, qiniuPath, buffer, putExtra, (respErr, respBody, respInfo) => {
+        if (respErr) {
+          console.error('❌ 七牛云上传失败:', respErr);
+          reject(new Error(`七牛云上传失败: ${respErr.message || respErr}`));
+          return;
         }
-      } else {
-        console.log('✅ OSS URL可访问:', finalUrl);
-      }
-    } catch (checkError) {
-      console.error('❌ 无法验证OSS URL可访问性:', checkError.message);
-      throw new Error(`OSS URL验证失败: ${checkError.message}`);
-    }
-    
-    // 尝试生成签名URL（有效期1小时），某些API可能需要签名URL
-    try {
-      const signUrl = ossClient.signatureUrl(ossPath, {
-        expires: 3600, // 1小时有效期
-        method: 'GET'
+        
+        if (respInfo.statusCode === 200) {
+          // 构建文件URL
+          // 从QINIU_URL中提取域名（移除协议前缀）
+          const qiniuDomain = QINIU_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
+          const bucketManager = new qiniu.rs.BucketManager(mac, qiniuConfig);
+          const publicDownloadUrl = bucketManager.publicDownloadUrl(qiniuDomain, qiniuPath);
+          
+          console.log('✅ 文件上传到七牛云成功，URL:', publicDownloadUrl);
+          
+          // 验证URL是否可以访问（等待文件同步）
+          console.log('⏳ 等待文件同步...');
+          setTimeout(async () => {
+            try {
+              const checkResponse = await fetch(publicDownloadUrl, { method: 'HEAD' });
+              if (!checkResponse.ok) {
+                console.warn('⚠️ 七牛云URL可能无法访问:', publicDownloadUrl, '状态码:', checkResponse.status);
+                // 如果HEAD失败，尝试GET请求
+                const getResponse = await fetch(publicDownloadUrl, { method: 'GET', headers: { 'Range': 'bytes=0-0' } });
+                if (!getResponse.ok) {
+                  console.warn('⚠️ 七牛云URL验证失败，但继续返回URL:', publicDownloadUrl);
+                } else {
+                  console.log('✅ 七牛云URL可访问（通过GET请求验证）:', publicDownloadUrl);
+                }
+              } else {
+                console.log('✅ 七牛云URL可访问:', publicDownloadUrl);
+              }
+              resolve(publicDownloadUrl);
+            } catch (checkError) {
+              console.warn('⚠️ 无法验证七牛云URL可访问性:', checkError.message, '但继续返回URL');
+              resolve(publicDownloadUrl);
+            }
+          }, 1000); // 等待1秒
+        } else {
+          console.error('❌ 七牛云上传失败，状态码:', respInfo.statusCode, '响应:', respBody);
+          reject(new Error(`七牛云上传失败: ${respInfo.statusCode} - ${JSON.stringify(respBody)}`));
+        }
       });
-      console.log('🔐 生成OSS签名URL（备用）:', signUrl.substring(0, 80) + '...');
-      // 注意：如果普通URL不行，可以尝试使用签名URL
-      // 但目前先使用普通URL，如果失败再尝试签名URL
-    } catch (signError) {
-      console.warn('⚠️ 生成签名URL失败:', signError.message);
-    }
-    
-    console.log('✅ 文件上传到OSS成功，URL:', finalUrl);
-    return finalUrl;
+    });
   } catch (error) {
-    console.error('❌ 上传文件到OSS失败:', error);
+    console.error('❌ 上传文件到七牛云失败:', error);
     throw error;
   }
 }
 
-// 腾讯云长语音合成API配置（从环境变量读取，必须配置）
-const TENCENT_SECRET_ID = process.env.TENCENT_SECRET_ID;
-const TENCENT_SECRET_KEY = process.env.TENCENT_SECRET_KEY;
-
-if (!TENCENT_SECRET_ID || !TENCENT_SECRET_KEY) {
-  console.error('❌ 警告：腾讯云TTS Secret未配置，请设置TENCENT_SECRET_ID和TENCENT_SECRET_KEY环境变量');
-}
-const TENCENT_TTS_ENDPOINT = 'tts.tencentcloudapi.com';
-const TENCENT_TTS_REGION = 'ap-guangzhou';
-const TENCENT_TTS_SERVICE = 'tts';
-const TENCENT_TTS_VERSION = '2019-08-23';
+// 腾讯云长语音合成API配置（已禁用）
+// 注意：腾讯云TTS服务已禁用，现在使用阿里云DashScope TTS
+// const TENCENT_SECRET_ID = process.env.TENCENT_SECRET_ID;
+// const TENCENT_SECRET_KEY = process.env.TENCENT_SECRET_KEY;
+// 
+// if (!TENCENT_SECRET_ID || !TENCENT_SECRET_KEY) {
+//   console.error('❌ 警告：腾讯云TTS Secret未配置，请设置TENCENT_SECRET_ID和TENCENT_SECRET_KEY环境变量');
+// }
+// const TENCENT_TTS_ENDPOINT = 'tts.tencentcloudapi.com';
+// const TENCENT_TTS_REGION = 'ap-guangzhou';
+// const TENCENT_TTS_SERVICE = 'tts';
+// const TENCENT_TTS_VERSION = '2019-08-23';
 
 // 注意：阿里云API可能需要使用不同的认证方式
 // Authorization header格式应该是: Bearer {API_KEY} 或 X-DashScope-API-Key: {API_KEY}
@@ -443,37 +452,113 @@ async function extractTextFromFile(fileUrl) {
   }
 }
 
-// 使用Master Key进行操作
-AV.Cloud.useMasterKey();
+// MySQL数据库，使用标准SQL操作
 
-// 初始化腾讯云TTS客户端
-const TtsClient = tencentcloud.tts.v20190823.Client;
-const tencentTtsClient = new TtsClient({
-  credential: {
-    secretId: TENCENT_SECRET_ID,
-    secretKey: TENCENT_SECRET_KEY,
-  },
-  region: TENCENT_TTS_REGION,
-  profile: {
-    httpProfile: {
-      endpoint: TENCENT_TTS_ENDPOINT,
-    },
-  },
-});
+// 初始化腾讯云TTS客户端（已禁用）
+// 注意：腾讯云TTS服务已禁用，现在使用阿里云DashScope TTS
+// const TtsClient = tencentcloud.tts.v20190823.Client;
+// const tencentTtsClient = new TtsClient({
+//   credential: {
+//     secretId: TENCENT_SECRET_ID,
+//     secretKey: TENCENT_SECRET_KEY,
+//   },
+//   region: TENCENT_TTS_REGION,
+//   profile: {
+//     httpProfile: {
+//       endpoint: TENCENT_TTS_ENDPOINT,
+//     },
+//   },
+// });
 
-// 初始化腾讯云ASR（语音识别）客户端
-const AsrClient = tencentcloud.asr.v20190614.Client;
-const tencentAsrClient = new AsrClient({
-  credential: {
-    secretId: TENCENT_SECRET_ID,
-    secretKey: TENCENT_SECRET_KEY,
-  },
-  region: 'ap-shanghai', // ASR服务区域
-  profile: {
-    httpProfile: {
-      endpoint: 'asr.tencentcloudapi.com',
-    },
-  },
+// 初始化腾讯云ASR（语音识别）客户端（已禁用）
+// const AsrClient = tencentcloud.asr.v20190614.Client;
+// const tencentAsrClient = new AsrClient({
+//   credential: {
+//     secretId: TENCENT_SECRET_ID,
+//     secretKey: TENCENT_SECRET_KEY,
+//   },
+//   region: 'ap-shanghai', // ASR服务区域
+//   profile: {
+//     httpProfile: {
+//       endpoint: 'asr.tencentcloudapi.com',
+//     },
+//   },
+// });
+
+// 获取书籍列表
+router.get('/', async (req, res) => {
+  try {
+    const { title, author, category, status, page = 1, limit = 20 } = req.query;
+    
+    let sql = `
+      SELECT b.*, 
+             c.id as category_id, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder
+      FROM Book b
+      LEFT JOIN Category c ON b.categoryId = c.id
+      WHERE 1=1
+    `;
+    const params = [];
+    
+    if (title) {
+      sql += ` AND b.title LIKE ?`;
+      params.push(`%${title}%`);
+    }
+    if (author) {
+      sql += ` AND b.author LIKE ?`;
+      params.push(`%${author}%`);
+    }
+    if (category) {
+      const categories = await db.findAll('SELECT id FROM Category WHERE nameCn = ? OR name = ?', [category, category]);
+      if (categories && categories.length > 0) {
+        const categoryIds = categories.map(c => c.id);
+        sql += ` AND b.categoryId IN (${categoryIds.map(() => '?').join(',')})`;
+        params.push(...categoryIds);
+      }
+    }
+    if (status) {
+      sql += ` AND b.status = ?`;
+      params.push(status);
+    }
+    
+    sql += ` ORDER BY b.createdAt DESC`;
+    
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(parseInt(limit), offset);
+    
+    const books = await db.query(sql, params);
+    
+    const booksData = books.map(book => ({
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      isbn: book.isbn,
+      category: book.category_id ? {
+        id: book.category_id,
+        name: book.category_name,
+        nameCn: book.category_nameCn,
+        sortOrder: book.category_sortOrder
+      } : undefined,
+      coverUrl: book.coverUrl,
+      blogCoverUrl: book.blogCoverUrl,
+      fileUrl: book.fileUrl,
+      uploadDate: book.uploadDate,
+      status: book.status,
+      createdAt: book.createdAt
+    }));
+    
+    res.json({
+      success: true,
+      data: booksData
+    });
+  } catch (error) {
+    console.error('获取书籍列表失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取书籍列表失败',
+      error: error.message
+    });
+  }
 });
 
 // 上传电子书文件
@@ -510,7 +595,7 @@ router.post('/upload', upload.single('bookFile'), async (req, res) => {
     }
 
     // 获取分类对象
-    const category = await new AV.Query('Category').get(categoryId);
+    const category = await db.findOne('SELECT * FROM Category WHERE id = ?', [categoryId]);
     if (!category) {
       return res.status(400).json({
         success: false,
@@ -518,101 +603,58 @@ router.post('/upload', upload.single('bookFile'), async (req, res) => {
       });
     }
 
-    // 上传文件到LeanCloud（使用Master Key）
-    console.log(`📤 开始上传文件到LeanCloud，文件名: ${file.originalname}，大小: ${(file.buffer.length / 1024 / 1024).toFixed(2)}MB`);
+    // 上传文件到七牛云
+    console.log(`📤 开始上传文件到七牛云，文件名: ${file.originalname}，大小: ${(file.buffer.length / 1024 / 1024).toFixed(2)}MB`);
     const fileExtension = file.originalname.split('.').pop();
     const fileName = `books/${Date.now()}_${title.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExtension}`;
     
-    // 确保使用Master Key（在创建File对象之前调用）
-    AV.Cloud.useMasterKey();
-    const leancloudFile = new AV.File(fileName, Buffer.from(file.buffer), file.mimetype);
-    
     // 设置超时时间（5分钟）
     const uploadStartTime = Date.now();
+    let fileUrl;
     try {
-      // 使用Master Key上传文件，避免权限问题
-      // 注意：AV.File.save() 的正确用法是直接调用 save()，因为已经调用了 AV.Cloud.useMasterKey()
-      await Promise.race([
-        leancloudFile.save(),
+      fileUrl = await Promise.race([
+        uploadFile(Buffer.from(file.buffer), fileName, file.mimetype),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('文件上传超时，请检查网络连接或文件大小')), 5 * 60 * 1000)
         )
       ]);
       const uploadTime = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
-      console.log(`✅ 文件上传完成，耗时: ${uploadTime}秒，URL: ${leancloudFile.url()}`);
+      console.log(`✅ 文件上传完成，耗时: ${uploadTime}秒，URL: ${fileUrl}`);
     } catch (error) {
       console.error('❌ 文件上传失败:', error);
       console.error('错误详情:', error.message);
       console.error('错误堆栈:', error.stack);
-      // 如果是DNS错误，提供更友好的错误信息
-      if (error.code === 'ENOTFOUND' || error.message.includes('ENOTFOUND')) {
-        throw new Error('文件上传失败：无法连接到LeanCloud服务器，请检查网络连接或联系管理员');
-      }
       throw new Error(`文件上传失败: ${error.message}`);
     }
 
-    // 验证文件URL是否可访问（确保文件已完全上传）
-    const fileUrl = leancloudFile.url();
-    console.log('🔍 验证文件URL可访问性:', fileUrl);
-    let fileAccessible = false;
-    let retryCount = 0;
-    const maxRetries = 5;
-    
-    while (!fileAccessible && retryCount < maxRetries) {
-      try {
-        const checkResponse = await fetch(fileUrl, { method: 'HEAD', timeout: 5000 });
-        if (checkResponse.ok) {
-          fileAccessible = true;
-          console.log('✅ 文件URL可访问');
-        } else {
-          retryCount++;
-          console.log(`⏳ 文件URL暂不可访问，重试 ${retryCount}/${maxRetries}...`);
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
-        }
-      } catch (error) {
-        retryCount++;
-        console.log(`⏳ 文件URL检查失败，重试 ${retryCount}/${maxRetries}...`, error.message);
-        if (retryCount < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
-        }
-      }
-    }
-    
-    if (!fileAccessible) {
-      console.warn('⚠️ 文件URL验证失败，但继续创建书籍记录');
-    }
-
-    // 创建书籍对象（只有在文件上传完成后才创建）
+    // 创建书籍记录
     console.log('📝 创建书籍记录...');
-    const BookClass = AV.Object.extend('Book');
-    const book = new BookClass();
-
-    book.set('title', title);
-    book.set('author', author);
-    book.set('isbn', isbn);
-    book.set('category', category);
-    book.set('fileUrl', fileUrl);
-    book.set('uploadDate', new Date().toISOString().split('T')[0]);
-    book.set('status', '待处理');
-
-    await book.save();
-    console.log('✅ 书籍记录创建成功，ID:', book.id);
+    const bookId = await db.insert('Book', {
+      title: title,
+      author: author,
+      isbn: isbn,
+      categoryId: categoryId,
+      fileUrl: fileUrl,
+      uploadDate: new Date().toISOString().split('T')[0],
+      status: '待处理'
+    });
+    console.log('✅ 书籍记录创建成功，ID:', bookId);
 
     res.json({
       success: true,
       data: {
-        id: book.id,
-        title: book.get('title'),
-        author: book.get('author'),
-        isbn: book.get('isbn'),
+        id: bookId,
+        title: title,
+        author: author,
+        isbn: isbn,
         category: {
           id: category.id,
-          name: category.get('name'),
-          nameCn: category.get('nameCn')
+          name: category.name,
+          nameCn: category.nameCn
         },
-        fileUrl: book.get('fileUrl'),
-        uploadDate: book.get('uploadDate'),
-        status: book.get('status')
+        fileUrl: fileUrl,
+        uploadDate: new Date().toISOString().split('T')[0],
+        status: '待处理'
       }
     });
   } catch (error) {
@@ -625,14 +667,14 @@ router.post('/upload', upload.single('bookFile'), async (req, res) => {
   }
 });
 
-// 生成博客封面图（使用doubao-seedream-4-0模型）- 必须在 /:bookId/extract 之前定义
-// 生成博客封面图提示词（使用Deepseek生成3种风格）
+// 生成博客封面图（使用阿里云 DashScope qwen-image-max 模型）- 必须在 /:bookId/extract 之前定义
+// 生成博客封面图提示词（使用阿里云DashScope qwen3-vl-plus生成3种风格）
 router.post('/:bookId/generate-blog-cover-prompts', async (req, res) => {
   try {
     const { bookId } = req.params;
     
     // 获取书籍信息
-    const book = await new AV.Query('Book').get(bookId);
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -640,10 +682,10 @@ router.post('/:bookId/generate-blog-cover-prompts', async (req, res) => {
       });
     }
     
-    const title = book.get('title');
-    const author = book.get('author');
-    const titleEn = book.get('titleEn') || '';
-    const authorEn = book.get('authorEn') || '';
+    const title = book.title;
+    const author = book.author;
+    const titleEn = book.titleEn || '';
+    const authorEn = book.authorEn || '';
     
     if (!title || !author) {
       return res.status(400).json({
@@ -665,8 +707,8 @@ router.post('/:bookId/generate-blog-cover-prompts', async (req, res) => {
     
     console.log('🎨 开始生成博客封面图提示词，书名:', titleText, '作者:', authorText);
     
-    // 使用Deepseek生成3种风格的提示词
-    const deepseekPrompt = `请根据以下书籍信息，生成3种不同风格的博客封面图提示词。
+    // 使用阿里云DashScope qwen3-vl-plus生成3种风格的提示词
+    const prompt = `请根据以下书籍信息，生成3种不同风格的博客封面图提示词。
 
 书籍信息：
 - 书名：${titleText}
@@ -695,48 +737,95 @@ router.post('/:bookId/generate-blog-cover-prompts', async (req, res) => {
   "style3": "提示词3（知识舞台风格）"
 }`;
 
-    const deepseekResponse = await fetch(DEEPSEEK_API_URL, {
+    const qwenResponse = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+        'Authorization': `Bearer ${ALIYUN_API_KEY}`,
+        'X-DashScope-SSE': 'enable'
       },
       body: JSON.stringify({
-        model: 'deepseek-chat',
+        model: 'qwen3-vl-plus',
+        input: {
         messages: [
           {
             role: 'user',
-            content: deepseekPrompt
+              content: [
+                {
+                  text: prompt
           }
-        ],
-        temperature: 0.7
+              ]
+            }
+          ]
+        },
+        parameters: {
+          incremental_output: true
+        }
       })
     });
 
-    if (!deepseekResponse.ok) {
-      const errorText = await deepseekResponse.text();
-      console.error('❌ Deepseek API返回错误:', deepseekResponse.status, errorText);
-      throw new Error(`Deepseek API错误: ${deepseekResponse.status} - ${errorText}`);
+    if (!qwenResponse.ok) {
+      const errorText = await qwenResponse.text();
+      console.error('❌ 阿里云DashScope qwen3-vl-plus API返回错误:', qwenResponse.status, errorText);
+      throw new Error(`阿里云DashScope qwen3-vl-plus API错误: ${qwenResponse.status} - ${errorText}`);
     }
 
-    const deepseekData = await deepseekResponse.json();
-    const deepseekContent = deepseekData.choices[0]?.message?.content || '';
-    console.log('📥 Deepseek API原始响应:', deepseekContent);
+    // 处理SSE流式响应
+    let qwenContent = '';
+    const reader = qwenResponse.body.getReader();
+    const decoder = new TextDecoder();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.substring(6);
+          if (data === '[DONE]') continue;
+          
+          try {
+            const jsonData = JSON.parse(data);
+            if (jsonData.output?.choices?.[0]?.message?.content) {
+              const content = jsonData.output.choices[0].message.content;
+              if (Array.isArray(content)) {
+                for (const item of content) {
+                  if (item.text) {
+                    qwenContent += item.text;
+                  }
+                }
+              } else if (typeof content === 'string') {
+                qwenContent += content;
+              }
+            } else if (jsonData.output?.text) {
+              qwenContent += jsonData.output.text;
+            }
+          } catch (e) {
+            // 忽略JSON解析错误，继续处理下一行
+          }
+        }
+      }
+    }
+    
+    console.log('📥 阿里云DashScope qwen3-vl-plus API原始响应:', qwenContent);
 
     // 解析JSON响应
     let prompts = null;
     try {
-      const jsonMatch = deepseekContent.match(/\{[\s\S]*\}/);
+      const jsonMatch = qwenContent.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         prompts = JSON.parse(jsonMatch[0]);
       }
     } catch (parseError) {
-      console.error('❌ 解析Deepseek响应失败:', parseError);
+      console.error('❌ 解析阿里云DashScope qwen3-vl-plus响应失败:', parseError);
     }
 
     // 如果解析失败，生成默认提示词
     if (!prompts || !prompts.style1 || !prompts.style2 || !prompts.style3) {
-      console.warn('⚠️ Deepseek返回的提示词格式不正确，使用默认提示词');
+      console.warn('⚠️ 阿里云DashScope qwen3-vl-plus返回的提示词格式不正确，使用默认提示词');
       const basePrompt = `A book cover design, 9:16 vertical ratio, high quality, professional design. The cover combines a physical book and a microphone element, directly indicating the theme of "book explanation". The cover must ONLY display the book title "${titleText}" and author name "${authorText}". Absolutely no other Chinese or English text, no descriptions, no subtitles, no additional information should appear on the cover.`;
       
       prompts = {
@@ -771,12 +860,16 @@ router.post('/:bookId/generate-blog-cover-prompts', async (req, res) => {
 });
 
 router.post('/:bookId/generate-blog-cover', async (req, res) => {
+  // 设置请求和响应超时时间（5分钟），因为图片生成+下载+上传可能需要较长时间
+  req.setTimeout(5 * 60 * 1000);
+  res.setTimeout(5 * 60 * 1000);
+  
   try {
     const { bookId } = req.params;
     const { customPrompt } = req.body; // 支持自定义提示词
     
     // 获取书籍信息
-    const book = await new AV.Query('Book').get(bookId);
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -784,10 +877,10 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
       });
     }
     
-    const title = book.get('title');
-    const author = book.get('author');
-    const titleEn = book.get('titleEn') || '';
-    const authorEn = book.get('authorEn') || '';
+    const title = book.title;
+    const author = book.author;
+    const titleEn = book.titleEn || '';
+    const authorEn = book.authorEn || '';
     
     if (!title || !author) {
       return res.status(400).json({
@@ -824,27 +917,42 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
       console.log('📝 使用默认提示词:', prompt);
     }
     
-    // Call Doubao Seedream image generation API (timeout set to 60 seconds)
+    // Call Alibaba Cloud DashScope image generation API (timeout set to 120 seconds)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout
+    
+    // 构建negative prompt
+    const negativePrompt = "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲。";
     
     let imageGenResponse;
     try {
-      console.log('🎨 Calling Doubao Seedream API to generate image, endpoint:', DOUBAO_IMAGE_GEN_URL);
-      imageGenResponse = await fetch(DOUBAO_IMAGE_GEN_URL, {
+      console.log('🎨 Calling Alibaba Cloud DashScope API to generate image, endpoint:', ALIYUN_IMAGE_GEN_URL);
+      imageGenResponse = await fetch(ALIYUN_IMAGE_GEN_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DOUBAO_API_KEY}`
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`
         },
         body: JSON.stringify({
-          model: DOUBAO_IMAGE_MODEL_ID,
-          prompt: prompt,
-          sequential_image_generation: 'disabled',
-          response_format: 'url',
-          size: '2K', // 2K resolution
-          stream: false,
-          watermark: true
+          model: "qwen-image-max",
+          input: {
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    text: prompt
+                  }
+                ]
+              }
+            ]
+          },
+          parameters: {
+            negative_prompt: negativePrompt,
+            prompt_extend: true,
+            watermark: false,
+            size: "1080*1920" // 9:16 vertical ratio
+          }
         }),
         signal: controller.signal
       });
@@ -852,43 +960,57 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        console.error('❌ Doubao image generation API request timeout (60 seconds)');
+        console.error('❌ Alibaba Cloud DashScope image generation API request timeout (60 seconds)');
         throw new Error('Image generation request timeout, please try again later');
       }
       if (error.cause && error.cause.code === 'UND_ERR_CONNECT_TIMEOUT') {
-        console.error('❌ Doubao image generation API connection timeout:', error.message);
+        console.error('❌ Alibaba Cloud DashScope image generation API connection timeout:', error.message);
         throw new Error('Unable to connect to image generation service, please check network connection or try again later');
       }
-      console.error('❌ Doubao image generation API request failed:', error.message);
+      console.error('❌ Alibaba Cloud DashScope image generation API request failed:', error.message);
       throw error;
     }
     
     if (!imageGenResponse.ok) {
       const errorText = await imageGenResponse.text();
-      console.error('❌ Doubao image generation API failed:', imageGenResponse.status, errorText);
-      throw new Error(`Doubao image generation API failed: ${imageGenResponse.status} ${imageGenResponse.statusText} - ${errorText}`);
+      console.error('❌ Alibaba Cloud DashScope image generation API failed:', imageGenResponse.status, errorText);
+      throw new Error(`Alibaba Cloud DashScope image generation API failed: ${imageGenResponse.status} ${imageGenResponse.statusText} - ${errorText}`);
     }
     
     const imageGenData = await imageGenResponse.json();
-    console.log('✅ Doubao image generation API response:', JSON.stringify(imageGenData, null, 2));
+    console.log('✅ Alibaba Cloud DashScope image generation API response:', JSON.stringify(imageGenData, null, 2));
     
-    // Check response format (Doubao returns: { data: [{ url: "..." }] })
-    if (!imageGenData.data || !Array.isArray(imageGenData.data) || imageGenData.data.length === 0) {
-      console.error('❌ Doubao image generation response format error:', JSON.stringify(imageGenData, null, 2));
-      throw new Error('Doubao image generation response format error, image URL not found');
+    // Check response format (DashScope returns: { output: { choices: [{ message: { content: [{ image: "..." }] } }] } })
+    let imageUrl;
+    if (imageGenData.output && imageGenData.output.choices && Array.isArray(imageGenData.output.choices) && imageGenData.output.choices.length > 0) {
+      const choice = imageGenData.output.choices[0];
+      if (choice.message && choice.message.content && Array.isArray(choice.message.content) && choice.message.content.length > 0) {
+        const contentItem = choice.message.content[0];
+        if (contentItem.image) {
+          imageUrl = contentItem.image;
+        }
+      }
     }
     
-    const imageUrl = imageGenData.data[0].url;
+    // 兼容其他可能的响应格式
+    if (!imageUrl && imageGenData.output && imageGenData.output.results && Array.isArray(imageGenData.output.results) && imageGenData.output.results.length > 0) {
+      imageUrl = imageGenData.output.results[0].url;
+    }
+    
+    if (!imageUrl && imageGenData.output && imageGenData.output.url) {
+      imageUrl = imageGenData.output.url;
+    }
+    
     if (!imageUrl) {
-      console.error('❌ Doubao image generation response format error, URL field not found:', JSON.stringify(imageGenData, null, 2));
-      throw new Error('Doubao image generation response format error, image URL not found');
+      console.error('❌ Alibaba Cloud DashScope image generation response format error:', JSON.stringify(imageGenData, null, 2));
+      throw new Error('Alibaba Cloud DashScope image generation response format error, image URL not found');
     }
     
     console.log('✅ Image generated successfully, URL:', imageUrl);
     
-    // Download image and upload to LeanCloud (timeout set to 30 seconds)
+    // Download image and upload to OSS (timeout set to 120 seconds)
     const downloadController = new AbortController();
-    const downloadTimeoutId = setTimeout(() => downloadController.abort(), 30000); // 30 second timeout
+    const downloadTimeoutId = setTimeout(() => downloadController.abort(), 120000); // 120 second timeout
     
     let imageResponse;
     try {
@@ -899,7 +1021,7 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
     } catch (error) {
       clearTimeout(downloadTimeoutId);
       if (error.name === 'AbortError') {
-        console.error('❌ Download image timeout (30 seconds)');
+        console.error('❌ Download image timeout (60 seconds)');
         throw new Error('Download generated image timeout, please try again later');
       }
       console.error('❌ Download image failed:', error.message);
@@ -911,15 +1033,11 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
     }
     
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-    const imageFile = new AV.File(`blog_cover_${bookId}_${Date.now()}.jpg`, imageBuffer, 'image/jpeg');
-    const uploadedFile = await imageFile.save();
-    
-    const finalImageUrl = uploadedFile.url();
-    console.log('✅ Image uploaded to LeanCloud successfully, URL:', finalImageUrl);
+    const finalImageUrl = await uploadFile(imageBuffer, `blog_cover_${bookId}_${Date.now()}.jpg`, 'image/jpeg', 'covers');
+    console.log('✅ Image uploaded to Qiniu successfully, URL:', finalImageUrl);
     
     // 保存到书籍对象
-    book.set('blogCoverUrl', finalImageUrl);
-    await book.save();
+    await db.update('Book', { blogCoverUrl: finalImageUrl }, 'id = ?', [bookId]);
     
     res.json({
       success: true,
@@ -939,7 +1057,7 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
   }
 });
 
-// 使用Deepseek拆解书籍内容
+// 使用阿里云DashScope qwen-long-latest拆解书籍内容
 router.post('/:bookId/extract', async (req, res) => {
   // 立即设置CORS头
   const origin = req.headers.origin;
@@ -1014,7 +1132,7 @@ router.post('/:bookId/extract', async (req, res) => {
     sendProgress('开始处理书籍提取请求', 0);
 
     // 获取书籍信息
-    const book = await new AV.Query('Book').get(bookId);
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -1023,7 +1141,7 @@ router.post('/:bookId/extract', async (req, res) => {
     }
 
     // 检查是否有附件文件
-    const fileUrl = book.get('fileUrl');
+    const fileUrl = book.fileUrl;
     if (!fileUrl) {
       return res.status(400).json({
         success: false,
@@ -1032,8 +1150,7 @@ router.post('/:bookId/extract', async (req, res) => {
     }
 
     // 更新书籍状态为提取中
-    book.set('status', '提取中');
-    await book.save();
+    await db.update('Book', { status: '提取中' }, 'id = ?', [req.params.bookId]);
 
     // 从附件文件提取文本内容
     console.log('📖 开始从附件文件提取文本内容...');
@@ -1046,65 +1163,51 @@ router.post('/:bookId/extract', async (req, res) => {
     } catch (error) {
       cleanup();
       console.error('❌ 提取文件内容失败:', error);
-      book.set('status', '待处理');
-      await book.save();
+      await db.update('Book', { status: '待处理' }, 'id = ?', [req.params.bookId]);
       const errorData = JSON.stringify({ success: false, message: `提取文件内容失败: ${error.message}`, completed: true });
       res.write(`data: ${errorData}\n\n`);
       res.end();
       return;
     }
 
-    // 调用Deepseek API拆解书籍（基于文件内容）
-    // 获取解读主线角度（如果有的话，否则使用默认值）
-    const mainTheme = req.body.mainTheme || `探讨其理论在AI时代的演变与对个人成长的启示`;
-    
-    const prompt = `请扮演一位资深书籍作者、商业分析师及播客主理人，你擅长将经典理论置于当下语境中进行深度解构与重建。现在，你要为一本重要的书籍创作一个具有持久影响力的深度解读系列。
+    // 调用阿里云DashScope qwen-long-latest模型拆解书籍（基于文件内容）
+    const prompt = `你是一位拥有十年经验的资深书籍解读人，擅长将复杂的书本思想转化为直击人心的故事。请根据我上传的书籍文件为我深度拆解成${segments}视频脚本，目标是创作一段"让人看完久久不能平静"的视频脚本。
 
-一、核心指令：
-1. 目标书籍：《${book.get('title')}》
-2. 系列构成：${segments}集系列解读文稿
-3. 核心要求：每集内容需达到 1000字左右的实质性分析，提供远超书籍摘要的增值洞察并且整个系列需围绕一个核心命题展开：${mainTheme}。
-
-二：分集详细创作（请对每一集进行充分展开）
-对于每一集，请按以下框架撰写：
-
-Episode [序号]：[一个具有吸引力和概括性的标题]
-
-1. 核心命题（一句话）：明确本集要解决和阐述的核心问题/观点。
-
-2. 开头段落（约150-200字）：以一个强烈的"认知钩子"（如一个颠覆性问题、一个普遍误区、一个震撼的书中金句）开篇。简要承接上文（如果是第二集及以后），并点明本集内容的独特价值和重要性。语言需具有对话感和引导性。
-
-3. 主体内容（约800-850字，必须达到深度分析要求）：这是核心部分，需详细展开，确保内容充实。必须包含：
-* 核心概念深度阐释：对书中关键概念进行剥茧抽丝式的解读，阐明其真正含义及常见误解。
-* 延伸分析与时代结合：结合本书出版后的商业案例、当前行业趋势或普遍面临的问题，论证这些概念的当下适用性。这是体现你分析深度的关键。
-* 对听众/读者的直接启示：将宏观理论落到微观行动，给出具体的思考方向、自检问题或行动步骤建议。
-
-4. 本集小结与下集预告（约50字）：
-* 用一两句话凝练本集核心收获。
-* 自然地引出下一集的主题，设置悬念。
-
-三、整体风格与格式规范：
-语言：精准、清晰、富有逻辑力量，同时具备向听众娓娓道来的对话感。避免空洞的形容词堆砌。
-立场：作为真诚的"解读桥梁"与"思考催化剂"，而非居高临下的布道者。
+请遵循以下要求：
+1. **角色设定**：你不是在做学术报告，而是一位"灵魂摆渡人"式的讲述者——温柔、深刻、有洞察力，能看透人性的脆弱与光辉。
+2. **选择书籍**：上传的书籍《${book.title}》。
+3. **脚本风格**：
+   - 情感真挚，语言富有文学性与哲思；
+   - 能引发观众强烈共鸣，甚至落泪；
+   - 不仅讲"书说了什么"，更要讲"它如何照见我们的人生"。
+4. **结构设计（每段视频2分钟左右）**：
+   - 【开场】：用一句极具冲击力的提问或金句抓住注意力，制造悬念；
+   - 【中段】：以故事化方式讲述书中核心情节或思想；
+   - 【高潮】：情感升华，将书的主题与现代人内心的孤独、挣扎、希望连接起来；
+   - 【结尾】：温柔收尾，给出一句治愈人心的结语，并自然引导点赞收藏。
+5. **输出格式**：
+   - 脚本只需包含旁白；
+   - 语言口语化。
 
 书籍内容：
 ${bookContent}
 
-请将以上内容拆解为${segments}集深度解读文稿。每集需要包含：
+现在，请为我生成这样${segments}刻骨铭心的书籍讲解视频脚本。每集需要包含：
 
 1. chapterTitle (Chinese) - 本集标题（中文），具有吸引力和概括性
 2. chapterTitleEn (English) - Episode Title (English) - REQUIRED
-3. summary (Chinese, 约200字) - 本集的核心内容总结，包含核心命题、主要观点和关键启示。要具体、有价值，避免概括性表述。直接阐述核心思想和洞察，不要使用"本书认为"、"作者指出"等表述。
-4. summaryEn (English, 约200-300字) - Summary (English) - 完整翻译中文summary，保持所有细节 - REQUIRED
-5. avatarDescription (description of gender, age, profession, style) - 数字人形象描述
-6. estimatedDuration (seconds) - 预计视频时长（秒）
+3. summary (Chinese, 约200字) - 本集的核心内容总结，包含开场、中段、高潮、结尾的完整内容。要具体、有价值，避免概括性表述。直接阐述核心思想和洞察，不要使用"本书认为"、"作者指出"等表述。语言要富有情感和文学性。
+4. summaryEn (English, 约200-300字) - Summary (English) - 完整翻译中文summary，保持所有细节和情感色彩 - REQUIRED
+5. avatarDescription (description of gender, age, profession, style) - 数字人形象描述，应该是一位温柔、深刻、有洞察力的讲述者
+6. estimatedDuration (seconds) - 预计视频时长（秒），约120秒（2分钟）
 
 IMPORTANT: 
 - You MUST provide English translations (chapterTitleEn, summaryEn) for ALL segments. Do not skip any English fields.
-- The summary should reflect the depth and analytical rigor described in the framework above.
+- The summary should reflect the emotional depth and literary quality described above.
 - Extract ESSENCE and CORE IDEAS, NOT general summaries or overviews.
 - Be SPECIFIC and CONCRETE. Avoid vague statements.
-- Focus on ACTIONABLE insights, principles, methods, or valuable concepts.
+- Focus on EMOTIONAL resonance and HUMAN insights that connect the book's themes to modern life.
+- Language should be conversational, literary, and philosophical.
 
 Return in JSON format:
 {
@@ -1112,59 +1215,68 @@ Return in JSON format:
     {
       "chapterTitle": "Episode标题（具有吸引力和概括性）",
       "chapterTitleEn": "Episode Title",
-      "summary": "核心内容总结（约200字，包含核心命题、主要观点和关键启示，具体、有价值）",
-      "summaryEn": "Summary (complete English translation, maintaining all details from Chinese summary, approximately 200-300 words)",
-      "avatarDescription": "形象描述",
-      "estimatedDuration": 180
+      "summary": "核心内容总结（约200字，包含开场、中段、高潮、结尾的完整内容，富有情感和文学性）",
+      "summaryEn": "Summary (complete English translation, maintaining all details and emotional depth from Chinese summary, approximately 200-300 words)",
+      "avatarDescription": "形象描述（温柔、深刻、有洞察力的讲述者）",
+      "estimatedDuration": 120
     }
   ]
 }`;
 
-    console.log('📞 调用Deepseek API，书籍:', book.get('title'), '分段数:', segments);
+    console.log('📞 调用阿里云DashScope qwen-long-latest API，书籍:', book.title, '分段数:', segments);
     console.log('📞 使用附件文件内容拆解，文件URL:', fileUrl);
     console.log('📞 文本内容长度:', bookContent.length, '字符');
-    console.log('📞 Deepseek API URL:', DEEPSEEK_API_URL);
-    console.log('📞 Deepseek API Key前4位:', DEEPSEEK_API_KEY ? DEEPSEEK_API_KEY.substring(0, 4) : '未设置');
+    console.log('📞 DashScope API URL:', DASHSCOPE_CHAT_API_URL);
+    console.log('📞 DashScope API Key前4位:', ALIYUN_API_KEY ? ALIYUN_API_KEY.substring(0, 4) : '未设置');
     
-    sendProgress('正在调用Deepseek API分析书籍内容', 30);
-    let deepseekResponse;
+    sendProgress('正在调用阿里云DashScope qwen-long-latest API分析书籍内容', 30);
+    let dashscopeResponse;
     try {
-      deepseekResponse = await fetch(DEEPSEEK_API_URL, {
+      dashscopeResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'deepseek-chat',
+          model: 'qwen-long-latest',
+          input: {
           messages: [
             {
               role: 'user',
               content: prompt
             }
-          ],
+            ]
+          },
+          parameters: {
           temperature: 0.7,
           max_tokens: 8000  // 增加token限制以处理更长的内容
+          }
         })
       });
     } catch (fetchError) {
-      console.error('❌ Deepseek API请求失败:', fetchError);
+      console.error('❌ 阿里云DashScope API请求失败:', fetchError);
       console.error('❌ 错误详情:', fetchError.message, fetchError.stack);
-      throw new Error(`无法连接到Deepseek API: ${fetchError.message}`);
+      throw new Error(`无法连接到阿里云DashScope API: ${fetchError.message}`);
     }
 
-    if (!deepseekResponse.ok) {
-      const errorText = await deepseekResponse.text().catch(() => '无法读取错误响应');
-      console.error('❌ Deepseek API返回错误:', deepseekResponse.status, deepseekResponse.statusText);
+    if (!dashscopeResponse.ok) {
+      const errorText = await dashscopeResponse.text().catch(() => '无法读取错误响应');
+      console.error('❌ 阿里云DashScope API返回错误:', dashscopeResponse.status, dashscopeResponse.statusText);
       console.error('❌ 错误响应内容:', errorText);
-      throw new Error(`Deepseek API错误 (${deepseekResponse.status}): ${deepseekResponse.statusText}. ${errorText.substring(0, 200)}`);
+      throw new Error(`阿里云DashScope API错误 (${dashscopeResponse.status}): ${dashscopeResponse.statusText}. ${errorText.substring(0, 200)}`);
     }
 
-    const deepseekData = await deepseekResponse.json();
-    const content = deepseekData.choices[0].message.content;
+    const dashscopeData = await dashscopeResponse.json();
+    const content = dashscopeData.output?.choices?.[0]?.message?.content || dashscopeData.output?.text || '';
     
-    console.log('📥 Deepseek API原始响应（前500字符）:', content.substring(0, 500) + '...');
-    sendProgress('Deepseek API分析完成，正在解析结果', 50);
+    if (!content) {
+      console.error('❌ 阿里云DashScope API响应格式错误:', JSON.stringify(dashscopeData, null, 2));
+      throw new Error('阿里云DashScope API未返回有效内容');
+    }
+    
+    console.log('📥 阿里云DashScope API原始响应（前500字符）:', content.substring(0, 500) + '...');
+    sendProgress('阿里云DashScope API分析完成，正在解析结果', 50);
 
     // 解析JSON响应（可能包含markdown代码块）
     let segmentsData;
@@ -1192,14 +1304,13 @@ Return in JSON format:
         }
       }
     } catch (parseError) {
-      console.error('❌ 解析Deepseek响应失败:', parseError);
+      console.error('❌ 解析阿里云DashScope响应失败:', parseError);
       console.error('❌ 响应内容:', content);
       throw new Error('无法解析AI返回的内容');
     }
 
     // 保存提取的内容到数据库
     sendProgress('正在保存提取的内容到数据库', 60);
-    const ExtractedContentClass = AV.Object.extend('ExtractedContent');
     const savedSegments = [];
     const totalSegments = segmentsData.segments?.length || 0;
 
@@ -1268,28 +1379,32 @@ Return in JSON format:
       if (needsTitleTranslation && segment.chapterTitle) {
         console.log(`🌐 [翻译] 章节标题: ${segment.chapterTitle}`);
         try {
-          const translateTitleResponse = await fetch(DEEPSEEK_API_URL, {
+          const translateTitleResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+              'Authorization': `Bearer ${ALIYUN_API_KEY}`
             },
             body: JSON.stringify({
-              model: 'deepseek-chat',
+              model: 'qwen-long-latest',
+              input: {
               messages: [
                 {
                   role: 'user',
                   content: `请将以下中文章节标题翻译成英文，只返回英文翻译，不要添加任何其他内容：\n${segment.chapterTitle}`
                 }
-              ],
+                ]
+              },
+              parameters: {
               temperature: 0.3,
               max_tokens: 100
+              }
             })
           });
           
           if (translateTitleResponse.ok) {
             const translateTitleData = await translateTitleResponse.json();
-            chapterTitleEn = translateTitleData.choices[0]?.message?.content?.trim() || '';
+            chapterTitleEn = translateTitleData.output?.choices?.[0]?.message?.content?.trim() || translateTitleData.output?.text?.trim() || '';
             if (chapterTitleEn) {
               console.log(`✅ [翻译完成] 标题: ${chapterTitleEn}`);
             } else {
@@ -1311,28 +1426,32 @@ Return in JSON format:
       if (needsSummaryTranslation && summary && summary.trim()) {
         console.log(`🌐 [翻译] 摘要: ${summary.substring(0, 50)}...`);
         try {
-          const translateSummaryResponse = await fetch(DEEPSEEK_API_URL, {
+          const translateSummaryResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+              'Authorization': `Bearer ${ALIYUN_API_KEY}`
             },
             body: JSON.stringify({
-              model: 'deepseek-chat',
+              model: 'qwen-long-latest',
+              input: {
               messages: [
                 {
                   role: 'user',
                   content: `请将以下中文内容摘要完整翻译成英文，保持所有细节，不要限制字数，只返回英文翻译，不要添加任何其他内容：\n${summary}`
                 }
-              ],
+                ]
+              },
+              parameters: {
               temperature: 0.3,
               max_tokens: 1000
+              }
             })
           });
           
           if (translateSummaryResponse.ok) {
             const translateSummaryData = await translateSummaryResponse.json();
-            summaryEnFinal = translateSummaryData.choices[0]?.message?.content?.trim() || '';
+            summaryEnFinal = translateSummaryData.output?.choices?.[0]?.message?.content?.trim() || translateSummaryData.output?.text?.trim() || '';
             if (summaryEnFinal) {
               // 保持完整，不限制字数
               console.log(`✅ [翻译完成] 摘要: ${summaryEnFinal.substring(0, 100)}... (总长度: ${summaryEnFinal.length}字符)`);
@@ -1361,33 +1480,36 @@ Return in JSON format:
       console.log(`   中文摘要长度: ${summary.length}`);
       console.log(`   英文摘要长度: ${summaryEnFinal.length}`);
       
-      const extractedContent = new ExtractedContentClass();
-      extractedContent.set('book', book);
-      extractedContent.set('chapterTitle', segment.chapterTitle || '未命名章节');
-      extractedContent.set('chapterTitleEn', chapterTitleEn);
-      extractedContent.set('summary', summary);
-      extractedContent.set('summaryEn', summaryEnFinal);
-      extractedContent.set('avatarDescription', segment.avatarDescription || '');
-      extractedContent.set('estimatedDuration', segment.estimatedDuration || 180);
-      extractedContent.set('videoStatus', 'pending');
-      extractedContent.set('segmentIndex', savedSegments.length + 1);
+      const extractedContentData = {
+        bookId: parseInt(bookId),
+        chapterTitle: segment.chapterTitle || '未命名章节',
+        chapterTitleEn: chapterTitleEn,
+        summary: summary,
+        summaryEn: summaryEnFinal,
+        avatarDescription: segment.avatarDescription || '',
+        estimatedDuration: segment.estimatedDuration || 180,
+        segmentIndex: savedSegments.length + 1,
+        videoStatus: 'pending',
+        keyPoints: segment.keyPoints ? JSON.stringify(segment.keyPoints) : null
+      };
 
-      await extractedContent.save();
+      const contentId = await db.insert('ExtractedContent', extractedContentData);
+      const savedContent = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
+      
       savedSegments.push({
-        id: extractedContent.id,
-        chapterTitle: extractedContent.get('chapterTitle'),
-        chapterTitleEn: extractedContent.get('chapterTitleEn'),
-        summary: extractedContent.get('summary'),
-        summaryEn: extractedContent.get('summaryEn'),
-        avatarDescription: extractedContent.get('avatarDescription'),
-        estimatedDuration: extractedContent.get('estimatedDuration'),
-        videoStatus: extractedContent.get('videoStatus')
+        id: savedContent.id,
+        chapterTitle: savedContent.chapterTitle,
+        chapterTitleEn: savedContent.chapterTitleEn,
+        summary: savedContent.summary,
+        summaryEn: savedContent.summaryEn,
+        avatarDescription: savedContent.avatarDescription,
+        estimatedDuration: savedContent.estimatedDuration,
+        videoStatus: savedContent.videoStatus
       });
     }
 
     // 更新书籍状态为已完成
-    book.set('status', '已完成');
-    await book.save();
+    await db.update('Book', { status: '已完成' }, 'id = ?', [req.params.bookId]);
 
     // 发送完成消息
     cleanup();
@@ -1419,11 +1541,7 @@ Return in JSON format:
     
     // 更新书籍状态为待处理（失败时）
     try {
-      const book = await new AV.Query('Book').get(req.params.bookId);
-      if (book) {
-        book.set('status', '待处理');
-        await book.save();
-      }
+      await db.update('Book', { status: '待处理' }, 'id = ?', [req.params.bookId]);
     } catch (updateError) {
       console.error('❌ 更新书籍状态失败:', updateError);
     }
@@ -1434,11 +1552,11 @@ Return in JSON format:
     
     // 检查是否是网络错误
     if (error.message && (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT'))) {
-      errorMessage = '无法连接到Deepseek API，请检查网络连接或API配置';
-      errorSuggestion = '请检查DEEPSEEK_API_KEY是否正确配置';
-    } else if (error.message && error.message.includes('Deepseek API')) {
-      errorMessage = 'Deepseek API调用失败';
-      errorSuggestion = '请检查DEEPSEEK_API_KEY是否正确，或查看Deepseek API服务状态';
+      errorMessage = '无法连接到阿里云DashScope API，请检查网络连接或API配置';
+      errorSuggestion = '请检查DASHSCOPE_API_KEY是否正确配置';
+    } else if (error.message && (error.message.includes('DashScope API') || error.message.includes('阿里云'))) {
+      errorMessage = '阿里云DashScope API调用失败';
+      errorSuggestion = '请检查DASHSCOPE_API_KEY是否正确，或查看阿里云DashScope API服务状态';
     } else if (error.message && (error.message.includes('JSON') || error.message.includes('解析'))) {
       errorMessage = '无法解析AI返回的内容';
       errorSuggestion = 'AI返回的内容格式不正确，请重试';
@@ -1470,7 +1588,7 @@ Return in JSON format:
   }
 });
 
-// 使用腾讯云长语音合成将文字转换为语音
+// 使用阿里云DashScope TTS将文字转换为语音
 router.post('/content/:contentId/generate-audio', async (req, res) => {
   // 立即设置CORS头，确保长时间运行的请求也能正确返回CORS响应
   const origin = req.headers.origin;
@@ -1502,16 +1620,8 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
     console.log('   language:', language, `(type: ${typeof language})`);
     console.log('   isEnglish:', isEnglish);
 
-    if (!text) {
-      console.log('❌ 缺少文本内容');
-      return res.status(400).json({
-        success: false,
-        message: '缺少文本内容'
-      });
-    }
-
     // 获取内容对象
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -1519,19 +1629,39 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
       });
     }
 
+    // 如果没有提供text，尝试从contentObj获取summary
+    let finalText = text;
+    if (!finalText) {
+      console.log('⚠️ 请求中未提供text，尝试从contentObj获取summary');
+      if (isEnglish) {
+        finalText = contentObj.summaryEn || contentObj.summary || '';
+      } else {
+        finalText = contentObj.summary || contentObj.summaryEn || '';
+      }
+      console.log('📝 从contentObj获取的文本:', finalText ? `${finalText.substring(0, 50)}...` : '空');
+    }
+
+    if (!finalText) {
+      console.log('❌ 缺少文本内容');
+      return res.status(400).json({
+        success: false,
+        message: '缺少文本内容（请提供text参数或确保contentObj中有summary字段）'
+      });
+    }
+
     // 获取书籍信息和集数信息，用于生成开场白
-    const book = contentObj.get('book');
-    const bookTitle = book ? (await book.fetch()).get('title') : '';
-    const segmentIndex = contentObj.get('segmentIndex') || 0;
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [contentObj.bookId]);
+    const bookTitle = book ? book.title : '';
+    const segmentIndex = contentObj.segmentIndex || 0;
     
     // 查询同一本书的所有内容段，获取总集数
     let totalSegments = 0;
     if (book) {
-      const allSegments = await new AV.Query('ExtractedContent')
-        .equalTo('book', book)
-        .ascending('segmentIndex')
-        .find();
-      totalSegments = allSegments.length;
+      const allSegments = await db.query(
+        'SELECT COUNT(*) as count FROM ExtractedContent WHERE bookId = ?',
+        [contentObj.bookId]
+      );
+      totalSegments = allSegments[0]?.count || 0;
     }
     
     // 根据集数生成开场白
@@ -1581,300 +1711,339 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
     }
     
     // 根据用户选择决定是否添加开场白
-    const finalText = (includeOpeningText && openingText) ? `${openingText}${text}` : text;
+    finalText = (includeOpeningText && openingText) ? `${openingText}${finalText}` : finalText;
     console.log(`📝 添加开场白选项: ${includeOpeningText ? '是' : '否'}, 集数: ${segmentIndex}/${totalSegments}, 语言: ${language}`);
     if (includeOpeningText && openingText) {
       console.log(`📝 开场白: ${openingText}`);
     }
     console.log(`📝 最终文本长度: ${finalText.length} 字符`);
 
-    // 统一使用腾讯云长文本语音合成（精品模型-大模型音色）
-    
-    // 统一使用腾讯云TTS长文本语音合成（精品模型-大模型音色）
-    // 不再区分语言，都使用CreateTtsTask API
-    // 已完全移除豆包TTS代码，只使用腾讯云TTS
-    
-    // 统一使用腾讯云长文本语音合成（精品模型-大模型音色）
-    // 中文和英文都使用腾讯云TTS的CreateTtsTask API，ModelType: 1（精品模型-大模型音色）
-    console.log('🔵 ========== 使用腾讯云长文本语音合成（精品模型-大模型音色） ==========');
+    // 使用阿里云DashScope CosyVoice-v3-plus进行语音合成
+    console.log('🔵 ========== 使用阿里云DashScope CosyVoice-v3-plus ==========');
     console.log('🔵 语言:', language);
-
-    // 统一使用腾讯云长文本语音合成（精品模型-大模型音色）
-    console.log('🎵 调用腾讯云长文本语音合成API（精品模型-大模型音色），文本长度:', finalText.length, '语言:', language);
+    console.log('🎵 调用阿里云DashScope TTS API，文本长度:', finalText.length, '语言:', language);
     
-    // 根据语言选择音色类型
-    // 中文音色：601001（长文本语音合成专用音色）
-    // 英文音色：501008（长文本语音合成专用音色）
-    const voiceType = isEnglish ? 501008 : 601001; // 英文使用501008，中文使用601001（长文本语音合成专用音色）
-    console.log(`🎤 选择音色类型: ${voiceType} (${isEnglish ? '英文-长文本语音合成专用音色' : '中文-长文本语音合成专用音色'})`);
+    // CosyVoice-v3-plus 模型没有字符数限制，可以直接处理长文本
+    // 根据语言选择音色
+    // Qwen TTS音色：中英文都使用Ethan
+    const voice = 'Ethan';
+    console.log(`🎤 选择音色: ${voice} (${isEnglish ? '英文' : '中文'})`);
     console.log(`📝 生成${isEnglish ? '英文' : '中文'}音频，文本长度: ${finalText.length}，内容预览: ${finalText.substring(0, 100)}...`);
     
-    // 统一使用长文本API（CreateTtsTask），使用精品模型（大模型音色）
-    let responseData;
+    // 调用阿里云DashScope Qwen TTS HTTP SSE API
+    // 参考文档：根据用户提供的示例
+    let audioBuffer = null;
     
-    // 强制使用长文本API（CreateTtsTask），使用精品模型（大模型音色）
-    const useLongTextAPI = true; // 强制使用CreateTtsTask API（长文本语音合成-精品模型-大模型音色）
-    
-    if (useLongTextAPI) {
-      console.log('📝 使用长文本语音合成API（CreateTtsTask）-精品模型（大模型音色）');
-      
-      // 使用精品模型（ModelType: 1）- 大模型音色
-      const modelType = 1; // 使用精品模型（大模型音色）
-      // 按照腾讯云API文档格式设置参数
-      const longTextParams = {
-        Text: finalText,
-        ProjectId: 0, // 项目ID，0表示默认项目（如果资源包绑定到特定项目，请修改为对应的ProjectId）
-        ModelType: modelType, // 模型类型：1-精品模型（大模型音色）
-        Volume: 0, // 音量：范围[-10, 10]，0为正常音量
-        Codec: 'mp3', // 音频格式：mp3、pcm
-        VoiceType: voiceType, // 根据语言选择音色类型：中文601001，英文501008
-        SampleRate: 16000, // 采样率：16000或8000
-        PrimaryLanguage: isEnglish ? 2 : 1, // 主语言：1-中文，2-英文
-        Speed: 0 // 语速：范围[-2, 2]，0为正常语速
+    try {
+      const requestBody = {
+        model: 'qwen-tts',
+        input: {
+          text: finalText,
+          voice: voice,
+          language_type: isEnglish ? 'English' : 'Chinese'
+        }
       };
-      console.log('📋 CreateTtsTask 请求参数:', JSON.stringify(longTextParams, null, 2));
-      console.log(`🔧 使用模型类型: ${modelType} (精品模型-大模型音色，支持长文本语音合成)`);
       
-      // 创建长文本语音合成任务
-      responseData = await tencentTtsClient.CreateTtsTask(longTextParams);
-      console.log('✅ 腾讯云长文本API响应:', JSON.stringify(responseData, null, 2));
+      console.log('📋 请求参数:', JSON.stringify(requestBody, null, 2));
       
-      // 检查错误
-      if (responseData.Error) {
-        const error = responseData.Error;
-        console.error('❌ 腾讯云API错误:', JSON.stringify(error, null, 2));
-        console.error('❌ 错误代码:', error.Code);
-        console.error('❌ 错误消息:', error.Message);
-        console.error('❌ 请求参数:', JSON.stringify(longTextParams, null, 2));
-        
-        // 特殊处理资源包配额用完错误
-        const isResourcePackError = error.Code === 'UnsupportedOperation.PkgExhausted' || 
-                                    error.Code === 'ResourceInsufficient' ||
-                                    (error.Message && (
-                                      error.Message.includes('资源包') || 
-                                      error.Message.includes('resource pack') ||
-                                      error.Message.includes('配额') ||
-                                      error.Message.includes('quota') ||
-                                      error.Message.includes('exhausted') ||
-                                      error.Message.includes('allowance')
-                                    ));
-        
-        if (isResourcePackError) {
-          console.log(`⚠️ 检测到资源包相关错误，当前已使用精品模型（大模型音色）（ModelType: ${modelType}）`);
-          console.log(`⚠️ 原始错误代码: ${error.Code}, 错误消息: ${error.Message}`);
-          console.log(`⚠️ 完整错误对象:`, JSON.stringify(error, null, 2));
-          console.log(`⚠️ 请求参数:`, JSON.stringify(longTextParams, null, 2));
-          console.log(`⚠️ 文本长度: ${text.length} 字符`);
-          console.log(`⚠️ ProjectId: ${longTextParams.ProjectId} (0表示默认项目)`);
-          console.log(`⚠️ VoiceType: ${longTextParams.VoiceType} (${isEnglish ? '英文' : '中文'})`);
-          console.log(`⚠️ PrimaryLanguage: ${longTextParams.PrimaryLanguage} (${isEnglish ? '英文' : '中文'})`);
-          
-          // 提供更详细的诊断信息
-          const diagnosticInfo = {
-            currentModelType: modelType,
-            projectId: longTextParams.ProjectId,
-            voiceType: longTextParams.VoiceType,
-            primaryLanguage: longTextParams.PrimaryLanguage,
-            language: language,
-            textLength: text.length,
-            errorCode: error.Code,
-            errorMessage: error.Message
-          };
-          
-          return res.status(402).json({
-            success: false,
-            message: '腾讯云资源包配额已用完或资源包类型不匹配',
-            error: error.Message || '资源包配额已用完',
-            code: error.Code,
-            originalError: error,
-            diagnosticInfo: diagnosticInfo,
-            troubleshooting: {
-              step1: '检查资源包类型：确保购买的是"长文本语音合成-精品模型-预付费包"（ModelType: 1）',
-              step2: '检查ProjectId：当前使用 ProjectId: 0（默认项目），如果您的资源包绑定到特定项目，请修改代码中的 ProjectId',
-              step3: '检查资源包状态：登录腾讯云控制台，查看资源包是否已生效（充值后可能需要等待几分钟）',
-              step4: '检查资源包绑定：确保资源包已绑定到正确的项目（ProjectId: 0 表示默认项目）',
-              step5: '检查资源包配额：确认资源包配额是否真的已用完（查看控制台中的使用量）'
-            },
-            suggestion: '请检查腾讯云控制台：\n1. 是否购买了"长文本语音合成-精品模型-预付费包"（ModelType: 1）\n2. 资源包是否已正确绑定到项目（当前使用 ProjectId: 0）\n3. 资源包是否已生效（充值后可能需要等待几分钟）\n4. 资源包配额是否真的已用完\n访问地址：https://console.cloud.tencent.com/tts'
-          });
-        }
-        
-        // 特殊处理VoiceType参数错误
-        if (error.Message && error.Message.includes('VoiceType')) {
-          console.error(`❌ VoiceType参数错误，当前值: ${voiceType}, 语言: ${language}, ModelType: ${modelType}`);
-          console.error(`❌ 完整错误信息:`, JSON.stringify(error, null, 2));
-          console.error(`❌ 请求参数:`, JSON.stringify(longTextParams, null, 2));
-          return res.status(400).json({
-            success: false,
-            message: `VoiceType参数错误: ${error.Message}`,
-            error: error.Message || JSON.stringify(error),
-            code: error.Code,
-            voiceType: voiceType,
-            language: language,
-            modelType: modelType,
-            suggestion: '请检查VoiceType参数是否正确，英文音色可以尝试：1005（男声）、1006（女声）、1007（女声）'
-          });
-        }
-        
-        return res.status(500).json({
-          success: false,
-          message: `腾讯云API错误: ${error.Message || '未知错误'}`,
-          error: error.Message || JSON.stringify(error),
-          code: error.Code
-        });
+      // 调用Qwen TTS API（SSE流式响应）
+      const ttsResponse = await fetch(ALIYUN_TTS_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`,
+          'X-DashScope-SSE': 'enable' // 启用SSE流式响应
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      console.log('📥 响应状态:', ttsResponse.status, ttsResponse.statusText);
+      
+      if (!ttsResponse.ok) {
+        const errorText = await ttsResponse.text();
+        console.error('❌ 阿里云DashScope TTS API失败:', ttsResponse.status, errorText);
+        throw new Error(`阿里云DashScope TTS API失败: ${ttsResponse.status} ${ttsResponse.statusText} - ${errorText}`);
       }
       
-      // 长文本API返回TaskId，需要轮询查询结果
-      const taskId = responseData.Data?.TaskId;
-      if (!taskId) {
-        throw new Error('腾讯云API响应中未找到TaskId');
-      }
+      // 检查Content-Type判断响应格式
+      const contentType = ttsResponse.headers.get('content-type') || '';
+      console.log('📥 Content-Type:', contentType);
       
-      console.log('✅ 长文本语音合成任务已创建，TaskId:', taskId);
-      
-      // 轮询查询任务状态（最多等待60秒）
       let audioUrl = null;
-      const maxAttempts = 30; // 最多查询30次
-      const pollInterval = 2000; // 每2秒查询一次
+      let audioBase64 = null;
       
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      if (contentType.includes('text/event-stream')) {
+        // SSE流式响应
+        console.log('📥 检测到SSE流式响应');
+        const reader = ttsResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = ''; // 用于累积不完整的行
         
-        // 按照腾讯云API文档格式设置查询参数
-        const queryParams = {
-          TaskId: taskId
-        };
-        console.log(`📋 DescribeTtsTaskStatus 请求参数 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryParams, null, 2));
-        
-        const queryResponse = await tencentTtsClient.DescribeTtsTaskStatus(queryParams);
-        console.log(`📊 查询任务状态 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryResponse, null, 2));
-        
-        if (queryResponse.Error) {
-          throw new Error(`查询任务状态失败: ${queryResponse.Error.Message}`);
+        // 处理SSE行的辅助函数（必须在循环前定义，以便访问外部变量）
+        function processSSELine(line) {
+          if (line.trim() === '' || line.startsWith(':')) return;
+          
+          // 处理event行
+          if (line.startsWith('event:')) {
+            const eventType = line.substring(6).trim();
+            console.log('📥 SSE事件类型:', eventType);
+            return;
+          }
+          
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.substring(6).trim();
+              if (jsonStr === '[DONE]') {
+                console.log('✅ 收到流结束标记');
+                return;
+              }
+              
+              // 尝试解析JSON，如果失败则尝试修复
+              let data = null;
+              try {
+                data = JSON.parse(jsonStr);
+              } catch (parseError) {
+                // 如果JSON解析失败，可能是被截断了
+                // 尝试查找URL字段（即使JSON不完整）
+                if (jsonStr.includes('"url"')) {
+                  console.warn('⚠️ JSON解析失败，但检测到url字段，尝试提取:', jsonStr.substring(0, 500));
+                  // 尝试提取URL
+                  const urlMatch = jsonStr.match(/"url"\s*:\s*"([^"]+)"/);
+                  if (urlMatch && urlMatch[1]) {
+                    audioUrl = urlMatch[1];
+                    console.log('✅ 从不完整的JSON中提取到音频URL:', audioUrl);
+                    return; // 成功提取URL，返回
+                  }
+                }
+                // 如果JSON不完整且不以}结尾，可能是最后一个数据块
+                if (!jsonStr.endsWith('}') && !jsonStr.endsWith(']')) {
+                  console.warn('⚠️ JSON可能不完整，跳过:', jsonStr.substring(0, 200));
+                  return; // 跳过不完整的JSON，等待下一个数据块
+                }
+                // 如果JSON格式错误，抛出异常
+                throw parseError;
+              }
+              
+              // 如果解析成功，继续处理
+              if (!data) {
+                return;
+              }
+              console.log('📥 解析SSE数据:', JSON.stringify(data).substring(0, 300));
+              
+              // 检查是否是错误响应
+              if (data.code && data.message) {
+                const errorCode = data.code || 'UnknownError';
+                const errorMsg = data.message || '未知错误';
+                console.error('❌ API返回错误:', errorCode, errorMsg);
+                throw new Error(`阿里云DashScope TTS API错误: ${errorCode} - ${errorMsg}`);
         }
         
-        const status = queryResponse.Data?.Status;
-        if (status === 2) { // 2表示任务完成
-          audioUrl = queryResponse.Data?.ResultUrl;
-          if (audioUrl) {
-            console.log('✅ 任务完成，获取到音频URL:', audioUrl);
+              // 检查各种可能的音频数据位置
+              if (data.output && data.output.audio) {
+                const audio = data.output.audio;
+                console.log('📥 找到output.audio对象:', JSON.stringify(audio).substring(0, 200));
+                
+                // 检查 output.audio.url（音频URL，通常在最后一条消息中）
+                if (audio.url && audio.url.length > 0) {
+                  audioUrl = audio.url;
+                  console.log('✅ 从output.audio.url获取到音频URL:', audioUrl);
+                }
+                
+                // 检查 output.audio.data（base64编码的音频数据，可能分多次返回）
+                if (audio.data && audio.data.length > 0) {
+                  // 累积base64数据（可能分多次返回）
+                  if (!audioBase64) {
+                    audioBase64 = '';
+                  }
+                  audioBase64 += audio.data;
+                  console.log('✅ 累积output.audio.data，当前总长度:', audioBase64.length);
+          }
+              }
+              
+              // 检查 output.choices[].message.content[].audio（备用路径）
+              if (data.output && data.output.choices && Array.isArray(data.output.choices)) {
+                for (const choice of data.output.choices) {
+                  if (choice.message && choice.message.content) {
+                    const contents = Array.isArray(choice.message.content) ? choice.message.content : [choice.message.content];
+                    for (const content of contents) {
+                      if (content.audio) {
+                        audioUrl = content.audio;
+                        console.log('✅ 从choices.message.content获取到音频URL:', audioUrl.substring(0, 100) + '...');
+                      } else if (content.audio_base64) {
+                        if (!audioBase64) {
+                          audioBase64 = '';
+    }
+                        audioBase64 += content.audio_base64;
+                        console.log('✅ 累积choices.message.content.audio_base64，当前总长度:', audioBase64.length);
+                      }
+                    }
+                  }
+                }
+              }
+              
+              // 检查顶层字段（备用路径）
+              if (data.audio) {
+                audioUrl = data.audio;
+                console.log('✅ 从顶层audio获取到音频URL:', audioUrl.substring(0, 100) + '...');
+              }
+              if (data.audio_base64) {
+                if (!audioBase64) {
+                  audioBase64 = '';
+                }
+                audioBase64 += data.audio_base64;
+                console.log('✅ 累积顶层audio_base64，当前总长度:', audioBase64.length);
+              }
+              
+            } catch (e) {
+              console.warn('⚠️ 解析SSE数据失败:', e.message, '行内容:', line.substring(0, 500));
+            }
+          }
+      }
+      
+        // 读取和处理SSE流数据
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            // 处理最后剩余的数据
+            if (buffer.trim()) {
+              console.log('📥 处理最后剩余的数据:', buffer.substring(0, 1000));
+              // 检查buffer中是否包含URL
+              if (buffer.includes('"url"')) {
+                console.log('📥 检测到buffer中包含url字段');
+                // 尝试从buffer中直接提取URL
+                const urlMatch = buffer.match(/"url"\s*:\s*"([^"]+)"/);
+                if (urlMatch && urlMatch[1]) {
+                  audioUrl = urlMatch[1];
+                  console.log('✅ 从buffer中提取到音频URL:', audioUrl);
+                }
+              }
+              const finalLines = buffer.split('\n');
+              for (const line of finalLines) {
+                if (line.trim() && !line.startsWith(':')) {
+                  processSSELine(line.trim());
+                }
+              }
+              // 如果buffer中还有未处理的data行（可能不完整），尝试处理
+              if (buffer.includes('data:') && !buffer.includes('\n')) {
+                console.log('📥 尝试处理buffer中的data行:', buffer.substring(0, 500));
+                processSSELine(buffer.trim());
+              }
+            }
             break;
           }
-        } else if (status === 3) { // 3表示任务失败
-          throw new Error(`任务失败: ${queryResponse.Data?.ErrorMsg || '未知错误'}`);
-        }
-        // status === 0 表示任务处理中，继续轮询
-      }
-      
-      if (!audioUrl) {
-        throw new Error('任务超时，未能获取音频URL');
-      }
-      
-      responseData = { Audio: audioUrl };
-    }
-    
-    // 处理音频数据：CreateTtsTask API返回的是URL，需要下载
-    let buffer;
-    
-      // CreateTtsTask API返回的是URL，需要下载
-      let audioUrl = responseData.Audio;
-      if (!audioUrl) {
-        throw new Error('腾讯云API响应中未找到音频URL');
-      }
-      
-      // 验证和修复URL格式
-      if (typeof audioUrl !== 'string') {
-        throw new Error(`音频URL格式错误: ${typeof audioUrl}`);
-      }
-      
-      // 如果URL不是以http://或https://开头，尝试添加https://
-      if (!audioUrl.startsWith('http://') && !audioUrl.startsWith('https://')) {
-        // 如果URL以//开头，添加https:
-        if (audioUrl.startsWith('//')) {
-          audioUrl = 'https:' + audioUrl;
-        } else {
-          // 否则尝试添加https://
-          audioUrl = 'https://' + audioUrl;
-        }
-      }
-      
-      // 验证URL格式
-      try {
-        new URL(audioUrl);
-      } catch (urlError) {
-        throw new Error(`音频URL格式无效: ${audioUrl}, 错误: ${urlError.message}`);
-      }
-      
-      console.log('✅ 从响应中获取音频URL:', audioUrl);
-      
-      // 下载音频文件（添加超时和重试机制）
-      let audioResponse;
-      const maxDownloadRetries = 3;
-      let downloadError;
-      
-      for (let retry = 0; retry < maxDownloadRetries; retry++) {
-        try {
-          if (retry > 0) {
-            console.log(`🔄 重试下载音频文件 (${retry}/${maxDownloadRetries - 1})...`);
-            await new Promise(resolve => setTimeout(resolve, 2000 * retry));
+          
+          const chunk = decoder.decode(value, { stream: true });
+          console.log('📥 收到SSE数据块（原始）:', chunk.substring(0, 200));
+          
+          // 检查chunk中是否包含URL（即使JSON不完整）
+          if (chunk.includes('"url"')) {
+            console.log('📥 检测到chunk中包含url字段');
+            const urlMatch = chunk.match(/"url"\s*:\s*"([^"]+)"/);
+            if (urlMatch && urlMatch[1]) {
+              audioUrl = urlMatch[1];
+              console.log('✅ 从chunk中提取到音频URL:', audioUrl);
+            }
           }
           
-          // 每次重试都创建新的AbortController和超时
-          const downloadController = new AbortController();
-          const downloadTimeoutId = setTimeout(() => downloadController.abort(), 60000); // 60秒超时
+          // 处理完整的行，保留不完整的行到下次处理
+          buffer += chunk;
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // 保留最后不完整的行
           
-          try {
-            audioResponse = await fetch(audioUrl, {
-              signal: downloadController.signal
-            });
-            clearTimeout(downloadTimeoutId);
-          } catch (fetchError) {
-            clearTimeout(downloadTimeoutId);
-            throw fetchError;
+          for (const line of lines) {
+            if (line.trim() && !line.startsWith(':')) {
+              processSSELine(line.trim());
+            }
+          }
+        }
+        
+        console.log('📥 SSE流处理完成，audioUrl:', audioUrl ? `已获取: ${audioUrl.substring(0, 100)}...` : '未获取', 'audioBase64长度:', audioBase64 ? audioBase64.length : 0);
+      } else {
+        // 普通JSON响应
+        console.log('📥 检测到JSON响应');
+        const responseData = await ttsResponse.json();
+        console.log('📥 完整响应数据:', JSON.stringify(responseData, null, 2));
+        
+        // 检查各种可能的音频数据位置
+        if (responseData.output) {
+          if (responseData.output.choices && Array.isArray(responseData.output.choices)) {
+            for (const choice of responseData.output.choices) {
+              if (choice.message && choice.message.content) {
+                const contents = Array.isArray(choice.message.content) ? choice.message.content : [choice.message.content];
+                for (const content of contents) {
+                  if (content.audio) {
+                    audioUrl = content.audio;
+                    console.log('✅ 从choices.message.content获取到音频URL:', audioUrl);
+                  } else if (content.audio_base64) {
+                    audioBase64 = content.audio_base64;
+                    console.log('✅ 从choices.message.content获取到Base64音频数据');
+                  }
+                }
+              }
+            }
           }
           
+          if (responseData.output.audio) {
+            audioUrl = responseData.output.audio;
+            console.log('✅ 从output.audio获取到音频URL:', audioUrl);
+          }
+          
+          if (responseData.output.result && typeof responseData.output.result === 'string') {
+            audioBase64 = responseData.output.result;
+            console.log('✅ 从output.result获取到音频数据');
+          }
+        }
+        
+        if (responseData.audio) {
+          audioUrl = responseData.audio;
+          console.log('✅ 从顶层audio获取到音频URL:', audioUrl);
+        }
+        if (responseData.audio_base64) {
+          audioBase64 = responseData.audio_base64;
+          console.log('✅ 从顶层audio_base64获取到音频数据');
+        }
+      }
+      
+      // 处理音频数据
+      if (audioUrl) {
+        // 如果有音频URL，下载音频
+        console.log('📥 下载音频文件，URL:', audioUrl);
+        const audioResponse = await fetch(audioUrl);
           if (!audioResponse.ok) {
             throw new Error(`下载音频文件失败: ${audioResponse.statusText}`);
           }
-          
-          const audioBlob = await audioResponse.blob();
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          buffer = Buffer.from(arrayBuffer);
-          console.log('✅ 音频文件下载完成，Buffer长度:', buffer.length);
-          break; // 成功则跳出循环
-        } catch (error) {
-          downloadError = error;
-          
-          if (error.name === 'AbortError') {
-            console.error(`❌ 下载音频文件超时 (尝试 ${retry + 1}/${maxDownloadRetries})`);
-            if (retry < maxDownloadRetries - 1) {
-              continue;
+        const audioArrayBuffer = await audioResponse.arrayBuffer();
+        audioBuffer = Buffer.from(audioArrayBuffer);
+        console.log('✅ 音频下载完成，Buffer长度:', audioBuffer.length);
+      } else if (audioBase64) {
+        // 如果有Base64数据，解码
+        console.log('📥 解码Base64音频数据，长度:', audioBase64.length);
+        audioBuffer = Buffer.from(audioBase64, 'base64');
+        console.log('✅ Base64解码完成，Buffer长度:', audioBuffer.length);
+      } else {
+        // 打印完整响应以便调试
+        if (!contentType.includes('text/event-stream')) {
+          const responseText = await ttsResponse.clone().text();
+          console.error('❌ 完整响应内容:', responseText.substring(0, 2000));
             }
-            throw new Error('下载音频文件超时（60秒）');
+        throw new Error('阿里云DashScope TTS API未返回音频数据（未找到audio或audio_base64字段）');
           }
           
-          if (error.code === 'ECONNRESET' || error.message.includes('ECONNRESET')) {
-            console.error(`❌ 下载音频文件连接重置 (尝试 ${retry + 1}/${maxDownloadRetries}):`, error.message);
-            if (retry < maxDownloadRetries - 1) {
-              continue;
-            }
+    } catch (error) {
+      console.error('❌ 阿里云DashScope TTS API调用失败:', error);
+      throw error;
           }
           
-          // 最后一次尝试失败，抛出错误
-          if (retry === maxDownloadRetries - 1) {
-            throw new Error(`下载音频文件失败（已重试${maxDownloadRetries}次）: ${error.message}`);
-          }
-        }
-      }
-      
-      if (!buffer) {
-        throw new Error(`下载音频文件失败（已重试${maxDownloadRetries}次）: ${downloadError?.message || '未知错误'}`);
+    // 处理音频数据
+    let buffer = audioBuffer;
+    
+    if (!buffer || buffer.length === 0) {
+      throw new Error('阿里云DashScope TTS API未返回有效的音频数据');
       }
     
-    // 将音频文件上传到LeanCloud（添加重试机制）
+    // 将音频文件上传到七牛云（添加重试机制）
     const fileName = `audio_${contentId}_${Date.now()}.mp3`;
-    const file = new AV.File(fileName, buffer, 'audio/mpeg');
-    console.log('📤 上传音频文件到LeanCloud:', fileName, '文件大小:', buffer.length, 'bytes');
+    console.log('📤 上传音频文件到七牛云:', fileName, '文件大小:', buffer.length, 'bytes');
     
     // 重试上传，最多3次
     let finalAudioUrl;
@@ -1889,8 +2058,7 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, 2000 * retry));
         }
         
-        await file.save();
-        finalAudioUrl = file.url();
+        finalAudioUrl = await uploadFile(buffer, fileName, 'audio/mpeg', 'audios');
         console.log('✅ 音频文件上传成功，URL:', finalAudioUrl);
         break; // 成功则跳出循环
       } catch (uploadError) {
@@ -1907,23 +2075,24 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
         
         // 最后一次尝试失败，抛出错误
         if (retry === maxRetries - 1) {
-          throw new Error(`上传音频文件到LeanCloud失败（已重试${maxRetries}次）: ${uploadError.message}`);
+          throw new Error(`上传音频文件到七牛云失败（已重试${maxRetries}次）: ${uploadError.message}`);
         }
       }
     }
     
     if (!finalAudioUrl) {
-      throw new Error(`上传音频文件到LeanCloud失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`);
+      throw new Error(`上传音频文件到七牛云失败（已重试${maxRetries}次）: ${lastError?.message || '未知错误'}`);
     }
     
     // 更新ExtractedContent记录，根据language参数保存到对应字段
     if (contentObj) {
+      const updateData = {};
       if (language === 'en') {
-        contentObj.set('audioUrlEn', finalAudioUrl);
+        updateData.audioUrlEn = finalAudioUrl;
       } else {
-        contentObj.set('audioUrl', finalAudioUrl);
+        updateData.audioUrl = finalAudioUrl;
       }
-      await contentObj.save();
+      await db.update('ExtractedContent', updateData, 'id = ?', [contentId]);
     }
 
     res.json({
@@ -1939,26 +2108,13 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
     console.error('❌ 错误堆栈:', error.stack);
     console.error('❌ 错误详情:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     
-    // 特殊处理腾讯云SDK异常
-    if (error.code === 'UnsupportedOperation.PkgExhausted') {
-      return res.status(402).json({
-        success: false,
-        message: '腾讯云资源包配额已用完，请前往腾讯云控制台购买资源包或充值',
-        error: error.message || '资源包配额已用完',
-        code: error.code,
-        suggestion: '请访问 https://console.cloud.tencent.com/tts 购买资源包'
-      });
-    }
-    
-    // 检查是否是腾讯云API错误
-    if (error.Error) {
-      const apiError = error.Error;
-      console.error('❌ 腾讯云API错误:', apiError);
+    // 特殊处理阿里云DashScope API错误
+    if (error.message && error.message.includes('DashScope')) {
       return res.status(500).json({
         success: false,
-        message: `腾讯云API错误: ${apiError.Message || '未知错误'}`,
-        error: apiError.Message || JSON.stringify(apiError),
-        code: apiError.Code
+        message: '阿里云DashScope TTS API错误',
+        error: error.message || '未知错误',
+        suggestion: '请检查API Key是否正确，或查看阿里云控制台'
       });
     }
     
@@ -1979,6 +2135,13 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Access-Control-Allow-Credentials', 'true');
   }
+  
+  // 豆包视频生成服务已禁用
+  return res.status(503).json({
+    success: false,
+    message: '豆包视频生成服务已禁用',
+    error: 'Doubao video generation service is disabled'
+  });
   
   // 设置响应超时时间（15分钟）
   req.setTimeout(15 * 60 * 1000);
@@ -2006,7 +2169,7 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
     }
     
     // 获取内容信息
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -2016,7 +2179,7 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
 
     // 获取文本内容（优先使用中文，如果没有则使用英文）
     // 只使用summary，不包含标题
-    const textContent = contentObj.get('summary') || contentObj.get('summaryEn') || '';
+    const textContent = contentObj.summary || contentObj.summaryEn || '';
     if (!textContent) {
       return res.status(400).json({
         success: false,
@@ -2025,7 +2188,7 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
     }
 
     // 获取音频时长（优先使用中文音频，如果没有则使用英文音频）
-    let audioUrl = contentObj.get('audioUrl') || contentObj.get('audioUrlEn');
+    let audioUrl = contentObj.audioUrl || contentObj.audioUrlEn;
     if (!audioUrl) {
       return res.status(400).json({
         success: false,
@@ -2034,11 +2197,10 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
     }
 
     // 判断是否是中文视频（如果存在中文音频URL，则为中文视频）
-    const isChineseVideo = !!contentObj.get('audioUrl');
+    const isChineseVideo = !!contentObj.audioUrl;
 
     // 更新状态为生成中
-    contentObj.set('videoStatus', 'generating');
-    await contentObj.save();
+    await db.update('ExtractedContent', { videoStatus: 'generating' }, 'id = ?', [contentId]);
 
     console.log('📝 开始生成无声视频，文本:', textContent.substring(0, 50) + '...');
 
@@ -2087,13 +2249,13 @@ router.post('/content/:contentId/generate-silent-video', async (req, res) => {
     const numSegments = 3; // 固定生成3段视频
     console.log('📊 固定生成', numSegments, '段视频（每段', videoSegmentDuration, '秒）');
     
-    // 步骤1: 使用Deepseek根据Chinese Summary生成3个视频画面提示词
-    console.log('🤖 步骤1: 使用Deepseek生成3个视频画面提示词...');
+    // 步骤1: 使用阿里云DashScope qwen-long-latest根据Chinese Summary生成3个视频画面提示词
+    console.log('🤖 步骤1: 使用阿里云DashScope qwen-long-latest生成3个视频画面提示词...');
     console.log('📝 Chinese Summary内容:', textContent);
     
     let videoPrompts = [];
     try {
-      const deepseekPrompt = `请根据以下中文内容，生成3个适合用于视频画面的视觉描述提示词。每个提示词应该简洁、具体、富有画面感，适合用于文生视频API。
+      const qwenPrompt = `请根据以下中文内容，生成3个适合用于视频画面的视觉描述提示词。每个提示词应该简洁、具体、富有画面感，适合用于文生视频API。
 
 内容摘要：
 ${textContent}
@@ -2110,36 +2272,41 @@ ${textContent}
   "prompts": ["提示词1", "提示词2", "提示词3"]
 }`;
 
-      const deepseekResponse = await fetch(DEEPSEEK_API_URL, {
+      const qwenResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'deepseek-chat',
-          messages: [
-            {
-              role: 'user',
-              content: deepseekPrompt
-            }
-          ],
-          temperature: 0.7
+          model: 'qwen-long-latest',
+          input: {
+            messages: [
+              {
+                role: 'user',
+                content: qwenPrompt
+              }
+            ]
+          },
+          parameters: {
+            temperature: 0.7,
+            max_tokens: 2000
+          }
         })
       });
 
-      if (!deepseekResponse.ok) {
-        const errorText = await deepseekResponse.text();
-        console.error('❌ Deepseek API返回错误:', deepseekResponse.status, errorText);
-        throw new Error(`Deepseek API错误: ${deepseekResponse.status} - ${errorText}`);
+      if (!qwenResponse.ok) {
+        const errorText = await qwenResponse.text();
+        console.error('❌ 阿里云DashScope qwen-long-latest API返回错误:', qwenResponse.status, errorText);
+        throw new Error(`阿里云DashScope qwen-long-latest API错误: ${qwenResponse.status} - ${errorText}`);
       }
 
-      const deepseekData = await deepseekResponse.json();
-      const deepseekContent = deepseekData.choices[0].message.content;
-      console.log('📥 Deepseek API原始响应:', deepseekContent);
+      const qwenData = await qwenResponse.json();
+      const qwenContent = qwenData.output?.choices?.[0]?.message?.content || qwenData.output?.text || '';
+      console.log('📥 阿里云DashScope qwen-long-latest API原始响应:', qwenContent);
 
       // 解析JSON响应
-      const jsonMatch = deepseekContent.match(/\{[\s\S]*\}/);
+      const jsonMatch = qwenContent.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsedData = JSON.parse(jsonMatch[0]);
         videoPrompts = parsedData.prompts || [];
@@ -2147,7 +2314,7 @@ ${textContent}
 
       // 确保有恰好3个提示词
       if (videoPrompts.length !== 3) {
-        console.warn('⚠️ Deepseek返回的提示词数量不是3个，使用备用方案');
+        console.warn('⚠️ 阿里云DashScope qwen-long-latest返回的提示词数量不是3个，使用备用方案');
         // 备用方案：将文本分段
         const textLength = textContent.length;
         const segmentTextLength = Math.ceil(textLength / numSegments);
@@ -2165,7 +2332,7 @@ ${textContent}
       });
 
     } catch (error) {
-      console.error('❌ 使用Deepseek生成提示词失败:', error.message);
+      console.error('❌ 使用阿里云DashScope qwen-long-latest生成提示词失败:', error.message);
       console.log('⚠️ 使用备用方案：将文本简单分段');
       
       // 备用方案：将文本分段
@@ -2566,25 +2733,23 @@ ${textContent}
       console.log(`✅ 视频时长(${concatenatedVideoDuration}秒) >= 音频时长(${audioDurationSeconds}秒)，无需重复播放`);
     }
     
-    // 上传最终的无声视频到LeanCloud
-    console.log('📤 开始上传无声视频到LeanCloud...');
+    // 上传最终的无声视频到七牛云
+    console.log('📤 开始上传无声视频到七牛云...');
     const silentVideoBuffer = await fs.readFile(finalVideoPath);
     const fileSizeMB = (silentVideoBuffer.length / 1024 / 1024).toFixed(2);
     console.log(`📊 视频文件大小: ${fileSizeMB}MB`);
     
-    const silentVideoFile = new AV.File(`silent_video_${contentId}_${timestamp}.mp4`, silentVideoBuffer, 'video/mp4');
-    
     // 设置上传超时时间（10分钟）
     const uploadStartTime = Date.now();
+    let silentVideoUrl;
     try {
-      await Promise.race([
-        silentVideoFile.save(),
+      silentVideoUrl = await Promise.race([
+        uploadFile(silentVideoBuffer, `silent_video_${contentId}_${timestamp}.mp4`, 'video/mp4', 'videos'),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('视频上传超时，请检查网络连接或文件大小')), 10 * 60 * 1000)
         )
       ]);
       const uploadTime = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
-    const silentVideoUrl = silentVideoFile.url();
       console.log(`✅ 无声视频上传成功，耗时: ${uploadTime}秒，URL:`, silentVideoUrl);
     } catch (error) {
       console.error('❌ 无声视频上传失败:', error);
@@ -2592,11 +2757,8 @@ ${textContent}
       throw new Error(`视频上传失败: ${error.message}`);
     }
     
-    const silentVideoUrl = silentVideoFile.url();
-    
     // 更新ExtractedContent记录
-    contentObj.set('silentVideoUrl', silentVideoUrl);
-    await contentObj.save();
+    await db.update('ExtractedContent', { silentVideoUrl: silentVideoUrl }, 'id = ?', [contentId]);
     
     // 清理临时文件
     const cleanupFiles = [
@@ -2629,16 +2791,12 @@ ${textContent}
     
     // 更新状态为失败
     try {
-      const content = await new AV.Query('ExtractedContent').get(req.params.contentId);
-      if (content) {
-        content.set('videoStatus', 'failed');
-        await content.save();
-      }
+      await db.update('ExtractedContent', { videoStatus: 'failed' }, 'id = ?', [req.params.contentId]);
     } catch (updateError) {
       console.error('更新内容状态失败:', updateError);
     }
     
-    // 检查是否是LeanCloud错误
+    // 检查是否是数据库错误
     if (error.message && error.message.includes('Object not found')) {
       return res.status(404).json({
         success: false,
@@ -2723,45 +2881,60 @@ function escapeSubtitlePath(filePath) {
 
 async function generateSubtitleFile(audioUrl, language, tempDir, contentId, timestamp) {
   try {
-    console.log(`📝 开始使用腾讯云ASR生成${language === 'zh' ? '中文' : '英文'}字幕，音频URL: ${audioUrl}`);
+    console.log(`📝 开始使用阿里云DashScope Paraformer-v1生成${language === 'zh' ? '中文' : '英文'}字幕，音频URL: ${audioUrl}`);
     
-    if (!TENCENT_SECRET_ID || !TENCENT_SECRET_KEY) {
-      throw new Error('腾讯云ASR Secret未配置，请设置TENCENT_SECRET_ID和TENCENT_SECRET_KEY环境变量');
-    }
+    const ALIYUN_API_KEY = process.env.DASHSCOPE_API_KEY || 'sk-abe50fde91f242a682c8c6c189310db5';
+    const SUBMIT_TASK_URL = 'https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription';
     
-    // 根据语言选择引擎模型
-    // 中文：16k_zh（16k中文通用）
-    // 英文：16k_en（16k英文）
-    // 中英混合：16k_zh_en（16k中英混合）
-    const engineModelType = language === 'zh' ? '16k_zh' : '16k_en';
+    // 根据语言设置language_hints参数
+    // paraformer-v1支持中文、英文，以及中英文混合
+    const languageHints = language === 'zh' ? ['zh'] : ['en'];
     
-    // 创建语音识别任务
-    console.log(`🎤 创建腾讯云ASR识别任务，引擎: ${engineModelType}`);
-    const createTaskParams = {
-      EngineModelType: engineModelType,
-      ChannelNum: 1, // 单声道
-      ResTextFormat: 0, // 返回带时间戳的文本格式
-      SourceType: 0, // 0表示音频URL方式
-      Url: audioUrl, // 音频URL
+    // 提交语音识别任务
+    console.log(`🎤 创建阿里云DashScope Paraformer-v1识别任务，语言: ${languageHints.join(',')}`);
+    const submitTaskParams = {
+      model: 'paraformer-v1',
+      input: {
+        file_urls: [audioUrl]
+      },
+      parameters: {
+        channel_id: [0], // 单声道
+        language_hints: languageHints
+      }
     };
     
-    console.log('📋 CreateRecTask 请求参数:', JSON.stringify(createTaskParams, null, 2));
-    const createResponse = await tencentAsrClient.CreateRecTask(createTaskParams);
-    console.log('✅ CreateRecTask 响应:', JSON.stringify(createResponse, null, 2));
+    console.log('📋 提交任务请求参数:', JSON.stringify(submitTaskParams, null, 2));
     
-    if (createResponse.Error) {
-      throw new Error(`创建ASR任务失败: ${createResponse.Error.Message || JSON.stringify(createResponse.Error)}`);
+    const submitResponse = await fetch(SUBMIT_TASK_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${ALIYUN_API_KEY}`,
+        'Content-Type': 'application/json',
+        'X-DashScope-Async': 'enable'
+      },
+      body: JSON.stringify(submitTaskParams)
+    });
+    
+    if (!submitResponse.ok) {
+      const errorText = await submitResponse.text();
+      throw new Error(`提交ASR任务失败: ${submitResponse.status} ${submitResponse.statusText} - ${errorText}`);
     }
     
-    const taskId = createResponse.Data?.TaskId;
+    const submitData = await submitResponse.json();
+    console.log('✅ 提交任务响应:', JSON.stringify(submitData, null, 2));
+    
+    const taskId = submitData.output?.task_id;
     if (!taskId) {
-      throw new Error('ASR任务创建成功但未返回TaskId');
+      throw new Error('ASR任务提交成功但未返回task_id');
     }
     
-    console.log(`✅ ASR任务已创建，TaskId: ${taskId}`);
+    console.log(`✅ ASR任务已提交，TaskId: ${taskId}`);
     
-    // 轮询查询任务状态（最多等待5分钟）
-    const maxAttempts = 60; // 最多查询60次
+    // 查询任务状态接口
+    const QUERY_TASK_URL = `https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`;
+    
+    // 轮询查询任务状态（最多等待10分钟）
+    const maxAttempts = 120; // 最多查询120次
     const pollInterval = 5000; // 每5秒查询一次
     let recognitionResult = null;
     
@@ -2769,26 +2942,34 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
       await new Promise(resolve => setTimeout(resolve, pollInterval));
       
       console.log(`📊 查询ASR任务状态 (${attempt + 1}/${maxAttempts})，TaskId: ${taskId}`);
-      const queryParams = {
-        TaskId: taskId
-      };
       
-      const queryResponse = await tencentAsrClient.DescribeTaskStatus(queryParams);
-      console.log(`📊 查询结果 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryResponse, null, 2));
+      const queryResponse = await fetch(QUERY_TASK_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`,
+          'Content-Type': 'application/json',
+          'X-DashScope-Async': 'enable'
+        }
+      });
       
-      if (queryResponse.Error) {
-        throw new Error(`查询ASR任务状态失败: ${queryResponse.Error.Message || JSON.stringify(queryResponse.Error)}`);
+      if (!queryResponse.ok) {
+        const errorText = await queryResponse.text();
+        throw new Error(`查询ASR任务状态失败: ${queryResponse.status} ${queryResponse.statusText} - ${errorText}`);
       }
       
-      const status = queryResponse.Data?.Status;
-      if (status === 2) { // 2表示任务完成
-        recognitionResult = queryResponse.Data;
+      const queryData = await queryResponse.json();
+      console.log(`📊 查询结果 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryData, null, 2));
+      
+      const status = queryData.output?.task_status;
+      if (status === 'SUCCEEDED') {
+        recognitionResult = queryData.output;
         console.log('✅ ASR任务完成，获取到识别结果');
         break;
-      } else if (status === 3) { // 3表示任务失败
-        throw new Error(`ASR任务失败: ${queryResponse.Data?.ErrorMsg || '未知错误'}`);
+      } else if (status === 'FAILED') {
+        const errorMsg = queryData.output?.message || '未知错误';
+        throw new Error(`ASR任务失败: ${errorMsg}`);
       }
-      // status === 0 表示任务处理中，继续轮询
+      // status === 'RUNNING' 或 'PENDING' 表示任务处理中，继续轮询
     }
     
     if (!recognitionResult) {
@@ -2796,43 +2977,51 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
     }
     
     // 解析识别结果
-    // ResTextFormat=0 返回格式：带时间戳的文本
-    // 可能返回在Result、ResultDetail或Data字段中
-    let resultText = recognitionResult.Result || recognitionResult.ResultDetail || recognitionResult.Data || '';
-    
-    // 如果resultText是对象，尝试提取文本内容
-    if (typeof resultText === 'object') {
-      resultText = resultText.Text || resultText.Result || JSON.stringify(resultText);
-    }
-    
-    // 确保resultText是UTF-8编码的字符串
-    // 如果是Buffer，转换为UTF-8字符串
-    if (Buffer.isBuffer(resultText)) {
-      resultText = resultText.toString('utf8');
-    } else if (typeof resultText !== 'string') {
-      resultText = String(resultText);
-    }
-    
-    // 确保字符串是有效的UTF-8编码
-    // 移除无效的UTF-8序列，避免乱码
-    try {
-      // 尝试将字符串编码为Buffer再解码，确保UTF-8有效性
-      const buffer = Buffer.from(resultText, 'utf8');
-      resultText = buffer.toString('utf8');
-    } catch (e) {
-      console.warn('⚠️ UTF-8编码转换警告:', e.message);
-    }
-    
-    if (!resultText || (typeof resultText === 'string' && resultText.trim().length === 0)) {
+    // Paraformer返回格式：results数组，每个元素包含file_url和transcription_url
+    const results = recognitionResult.results || [];
+    if (results.length === 0) {
       throw new Error('ASR识别结果为空');
     }
     
-    console.log('📝 ASR识别结果文本:', typeof resultText === 'string' ? resultText.substring(0, 500) : JSON.stringify(resultText).substring(0, 500));
-    console.log('📝 ASR识别结果编码检查: UTF-8字符串，长度', resultText.length);
+    // 获取第一个结果的transcription_url（如果存在）
+    let transcriptionUrl = null;
+    let transcriptionText = null;
+    
+    for (const result of results) {
+      if (result.subtask_status === 'SUCCEEDED' && result.transcription_url) {
+        transcriptionUrl = result.transcription_url;
+        break;
+      } else if (result.subtask_status === 'SUCCEEDED' && result.transcription) {
+        transcriptionText = result.transcription;
+        break;
+    }
+    }
+    
+    // 如果有transcription_url，下载识别结果
+    if (transcriptionUrl) {
+      console.log('📥 下载识别结果，URL:', transcriptionUrl);
+      const transcriptionResponse = await fetch(transcriptionUrl);
+      if (!transcriptionResponse.ok) {
+        throw new Error(`下载识别结果失败: ${transcriptionResponse.statusText}`);
+      }
+      transcriptionText = await transcriptionResponse.text();
+    }
+    
+    if (!transcriptionText) {
+      // 如果没有transcription_url，尝试从results中提取文本
+      transcriptionText = results.map(r => r.transcription || '').filter(t => t).join('\n');
+    }
+    
+    if (!transcriptionText || transcriptionText.trim().length === 0) {
+      throw new Error('ASR识别结果为空');
+    }
+    
+    console.log('📝 ASR识别结果文本:', transcriptionText.substring(0, 500));
+    console.log('📝 ASR识别结果长度:', transcriptionText.length);
     
     // 将识别结果转换为SRT格式
     const srtPath = path.join(tempDir, `subtitle_${contentId}_${language}_${timestamp}.srt`);
-    const srtContent = convertAsrResultToSRT(resultText);
+    const srtContent = convertParaformerResultToSRT(transcriptionText, language);
     
     // 确保使用UTF-8 BOM编码，避免中文乱码
     // 使用Buffer确保UTF-8 BOM正确写入
@@ -2847,7 +3036,7 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
     
     return srtPath;
   } catch (error) {
-    console.error('❌ 使用腾讯云ASR生成字幕失败:', error);
+    console.error('❌ 使用阿里云DashScope Paraformer-v1生成字幕失败:', error);
     console.error('❌ 错误详情:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
     console.error('❌ 错误消息:', error.message);
     console.error('❌ 错误堆栈:', error.stack);
@@ -2857,7 +3046,310 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
   }
 }
 
-// 将腾讯云ASR识别结果转换为SRT格式
+// 将阿里云DashScope Paraformer识别结果转换为SRT格式
+function convertParaformerResultToSRT(transcriptionText, language) {
+  // Paraformer返回的transcription可能是：
+  // 1. JSON格式，包含sentences数组，每个sentence包含text和start_time/end_time
+  // 2. JSON格式，包含words数组，每个word包含word和start_time/end_time
+  // 3. 纯文本格式
+  // 4. 带时间戳的文本格式
+  
+  let srtContent = '';
+  let index = 1;
+  
+  try {
+    // 先尝试解析JSON格式
+    let parsedData = null;
+    try {
+      parsedData = JSON.parse(transcriptionText);
+    } catch (e) {
+      // 不是JSON格式，继续处理
+    }
+    
+    if (parsedData && parsedData.transcripts && Array.isArray(parsedData.transcripts)) {
+      // JSON格式，包含transcripts数组（Paraformer标准格式）
+      console.log('📋 Paraformer结果JSON格式，transcripts数量:', parsedData.transcripts.length);
+      
+      // 检查transcripts数组是否包含时间戳信息
+      const firstTranscript = parsedData.transcripts[0];
+      const hasTimestamps = firstTranscript && (
+        firstTranscript.start_time !== undefined || 
+        firstTranscript.end_time !== undefined ||
+        firstTranscript.start !== undefined ||
+        firstTranscript.end !== undefined ||
+        (firstTranscript.words && Array.isArray(firstTranscript.words) && firstTranscript.words.length > 0)
+      );
+      
+      if (hasTimestamps && firstTranscript.words && Array.isArray(firstTranscript.words)) {
+        // 如果有words数组，使用单词级别的时间戳（最精确）
+        console.log('📋 使用单词级别时间戳');
+        let currentSentence = '';
+        let sentenceStartTime = null;
+        let sentenceEndTime = null;
+        
+        for (const word of firstTranscript.words) {
+          if (!word.word || !word.word.trim()) continue;
+          
+          const wordStartTime = (word.start_time || word.start || 0) / 1000; // 转换为秒
+          const wordEndTime = (word.end_time || word.end || wordStartTime * 1000 + 500) / 1000;
+          
+          if (sentenceStartTime === null) {
+            sentenceStartTime = wordStartTime;
+          }
+          sentenceEndTime = wordEndTime;
+          
+          currentSentence += word.word.trim() + ' ';
+          
+          // 如果遇到标点符号或句子结束，开始新的字幕块
+          if (/[。！？.!?]/.test(word.word)) {
+            if (currentSentence.trim()) {
+              const startTimeStr = formatSRTTime(sentenceStartTime);
+              const endTimeStr = formatSRTTime(sentenceEndTime);
+              
+              srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+              index++;
+            }
+            currentSentence = '';
+            sentenceStartTime = null;
+            sentenceEndTime = null;
+          }
+        }
+        
+        // 处理最后一句
+        if (currentSentence.trim() && sentenceStartTime !== null) {
+          const startTimeStr = formatSRTTime(sentenceStartTime);
+          const endTimeStr = formatSRTTime(sentenceEndTime || sentenceStartTime + 3);
+          
+          srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+        }
+      } else {
+        // 如果没有精确的时间戳，使用音频总时长按比例分配
+        // 获取音频总时长（优先使用content_duration_in_milliseconds，否则使用properties中的时长）
+        let totalDurationMs = 0;
+        if (parsedData.transcripts.length > 0 && parsedData.transcripts[0].content_duration_in_milliseconds) {
+          totalDurationMs = parsedData.transcripts[0].content_duration_in_milliseconds;
+        } else if (parsedData.properties && parsedData.properties.original_duration_in_milliseconds) {
+          totalDurationMs = parsedData.properties.original_duration_in_milliseconds;
+        }
+        
+        const totalDurationSeconds = totalDurationMs / 1000;
+        console.log(`⏱️ 音频总时长: ${totalDurationSeconds}秒 (${totalDurationMs}毫秒)`);
+        
+        // 不使用提前量，直接使用音频实际时长按比例分配时间戳
+        let currentTime = 0;
+        for (const transcript of parsedData.transcripts) {
+        if (!transcript.text || !transcript.text.trim()) continue;
+        
+        const text = transcript.text.trim();
+        const totalTextLength = text.length;
+        
+        // 智能分段文本，确保单词完整性
+        const validSentences = [];
+        
+        if (language === 'en') {
+          // 英文：按句子分段，确保单词不被分割
+          // 先按句号、问号、感叹号分段
+          const sentences = text.split(/([.!?]\s+)/);
+          
+          for (let i = 0; i < sentences.length; i += 2) {
+            let sentence = sentences[i]?.trim();
+            const punctuation = sentences[i + 1]?.trim() || '';
+            
+            if (!sentence) continue;
+            
+            // 如果句子太长（超过80个字符），按逗号、分号、冒号分段
+            if (sentence.length > 80) {
+              const parts = sentence.split(/([,;:]\s+)/);
+              for (let j = 0; j < parts.length; j += 2) {
+                let part = parts[j]?.trim();
+                const partPunctuation = parts[j + 1]?.trim() || '';
+                if (part) {
+                  // 确保单词完整性：如果part以空格结尾，保留；否则添加空格
+                  const fullPart = part + partPunctuation;
+                  validSentences.push({
+                    text: fullPart,
+                    length: fullPart.length
+                  });
+                }
+              }
+            } else {
+              // 短句子直接添加
+              const fullSentence = sentence + punctuation;
+              validSentences.push({
+                text: fullSentence,
+                length: fullSentence.length
+              });
+            }
+          }
+        } else {
+          // 中文：按标点符号分段
+          const sentences = text.split(/([。！？.!?])/);
+          
+          for (let i = 0; i < sentences.length; i += 2) {
+            const sentence = sentences[i]?.trim();
+            const punctuation = sentences[i + 1] || '';
+            if (sentence) {
+              validSentences.push({
+                text: sentence + punctuation,
+                length: (sentence + punctuation).length
+              });
+            }
+          }
+        }
+        
+        // 按文本长度比例分配时间戳
+        let processedLength = 0;
+        for (const sentenceObj of validSentences) {
+          const sentence = sentenceObj.text;
+          const sentenceLength = sentenceObj.length;
+          
+          // 计算句子在总文本中的比例
+          const textRatio = sentenceLength / totalTextLength;
+          const sentenceDuration = totalDurationSeconds * textRatio;
+          
+          // 确保最小显示时长为0.5秒，最大不超过剩余时长
+          const minDuration = 0.5;
+          const remainingDuration = totalDurationSeconds - Math.max(0, currentTime);
+          const actualDuration = Math.max(minDuration, Math.min(sentenceDuration, remainingDuration));
+          
+          // 确保开始时间不为负数（第一个字幕从0开始）
+          const sentenceStartTime = Math.max(0, currentTime);
+          const sentenceEndTime = sentenceStartTime + actualDuration;
+          
+          const sentenceStartTimeStr = formatSRTTime(sentenceStartTime);
+          const sentenceEndTimeStr = formatSRTTime(sentenceEndTime);
+          
+          srtContent += `${index}\n${sentenceStartTimeStr} --> ${sentenceEndTimeStr}\n${sentence}\n\n`;
+          index++;
+          
+          // 更新currentTime，不使用提前量
+          currentTime = sentenceEndTime;
+          processedLength += sentenceLength;
+          
+          // 如果已经处理完所有文本，停止
+          if (currentTime >= totalDurationSeconds) {
+            break;
+          }
+        }
+        
+        // 确保最后一个字幕的结束时间不超过总时长
+        if (currentTime > totalDurationSeconds) {
+          currentTime = totalDurationSeconds;
+        }
+        }
+      }
+    } else if (parsedData && parsedData.sentences && Array.isArray(parsedData.sentences)) {
+      // JSON格式，包含sentences数组
+      console.log('📋 Paraformer结果JSON格式，sentences数量:', parsedData.sentences.length);
+      
+      for (const sentence of parsedData.sentences) {
+        if (!sentence.text || !sentence.text.trim()) continue;
+        
+        const startTime = sentence.start_time || sentence.start || 0;
+        const endTime = sentence.end_time || sentence.end || startTime + 3;
+        
+        const startTimeStr = formatSRTTime(startTime);
+        const endTimeStr = formatSRTTime(endTime);
+        
+        srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${sentence.text.trim()}\n\n`;
+        index++;
+      }
+    } else if (parsedData && parsedData.words && Array.isArray(parsedData.words)) {
+      // JSON格式，包含words数组（单词级别的时间戳）
+      console.log('📋 Paraformer结果JSON格式，words数量:', parsedData.words.length);
+      
+      // 按句子分组words
+      let currentSentence = '';
+      let sentenceStartTime = null;
+      let sentenceEndTime = null;
+      
+      for (const word of parsedData.words) {
+        if (!word.word || !word.word.trim()) continue;
+        
+        const wordStartTime = word.start_time || word.start || 0;
+        const wordEndTime = word.end_time || word.end || wordStartTime + 0.5;
+        
+        if (sentenceStartTime === null) {
+          sentenceStartTime = wordStartTime;
+        }
+        sentenceEndTime = wordEndTime;
+        
+        currentSentence += word.word.trim();
+        
+        // 如果遇到标点符号或句子结束，开始新的字幕块
+        if (/[。！？.!?]/.test(word.word)) {
+          if (currentSentence.trim()) {
+            const startTimeStr = formatSRTTime(sentenceStartTime);
+            const endTimeStr = formatSRTTime(sentenceEndTime);
+            
+            srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+            index++;
+          }
+          currentSentence = '';
+          sentenceStartTime = null;
+          sentenceEndTime = null;
+        }
+      }
+      
+      // 处理最后一句
+      if (currentSentence.trim() && sentenceStartTime !== null) {
+        const startTimeStr = formatSRTTime(sentenceStartTime);
+        const endTimeStr = formatSRTTime(sentenceEndTime || sentenceStartTime + 3);
+        
+        srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+      }
+    } else {
+      // 纯文本格式，需要按标点符号分段
+      console.log('📋 Paraformer结果纯文本格式');
+      
+      // 按标点符号分段
+      const sentences = transcriptionText.split(/([。！？.!?])/);
+      let currentTime = 0;
+      const timePerChar = 0.1; // 假设每个字符0.1秒
+      
+      for (let i = 0; i < sentences.length; i += 2) {
+        const sentence = sentences[i]?.trim();
+        const punctuation = sentences[i + 1] || '';
+        
+        if (!sentence) continue;
+        
+        const fullSentence = sentence + punctuation;
+        const duration = fullSentence.length * timePerChar;
+        const startTime = currentTime;
+        const endTime = currentTime + duration;
+        
+        const startTimeStr = formatSRTTime(startTime);
+        const endTimeStr = formatSRTTime(endTime);
+        
+        srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${fullSentence}\n\n`;
+        index++;
+        
+        currentTime = endTime;
+      }
+    }
+    
+    if (!srtContent.trim()) {
+      throw new Error('无法从Paraformer结果中提取字幕内容');
+    }
+    
+    return srtContent;
+  } catch (error) {
+    console.error('❌ 解析Paraformer结果失败:', error);
+    throw new Error(`解析Paraformer识别结果失败: ${error.message}`);
+  }
+}
+
+// 格式化SRT时间戳（秒数转换为HH:MM:SS,mmm格式）
+function formatSRTTime(seconds) {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+  const milliseconds = Math.floor((seconds % 1) * 1000);
+  
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+}
+
+// 将腾讯云ASR识别结果转换为SRT格式（保留作为备用）
 function convertAsrResultToSRT(resultText) {
   // ASR返回格式可能是多种：
   // 格式1: "00:00:00,000 --> 00:00:03,000 第一段文字\n00:00:03,000 --> 00:00:06,000 第二段文字"
@@ -3717,7 +4209,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
     // 获取内容信息
     let contentObj;
     try {
-      contentObj = await new AV.Query('ExtractedContent').get(contentId);
+      contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     } catch (queryError) {
       console.error('❌ 查询内容失败:', queryError);
       return res.status(404).json({
@@ -3742,7 +4234,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
     if (!finalAudioUrl) {
       // 如果前端没有传递audioUrl，从content对象中获取
       if (language === 'en') {
-        finalAudioUrl = contentObj.get('audioUrlEn');
+        finalAudioUrl = contentObj.audioUrlEn;
         if (!finalAudioUrl) {
           return res.status(400).json({
             success: false,
@@ -3750,7 +4242,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
           });
         }
       } else {
-        finalAudioUrl = contentObj.get('audioUrl');
+        finalAudioUrl = contentObj.audioUrl;
         if (!finalAudioUrl) {
           return res.status(400).json({
             success: false,
@@ -3771,7 +4263,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
     }
 
     // 获取书籍信息以获取博客封面图
-    const bookId = contentObj.get('book')?.id || contentObj.get('bookId');
+    const bookId = contentObj.bookId;
     if (!bookId) {
       return res.status(400).json({
         success: false,
@@ -3779,7 +4271,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
       });
     }
     
-    const book = await new AV.Query('Book').get(bookId);
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -3788,7 +4280,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
     }
     
     // Use custom cover image if provided, otherwise use book's blog cover image
-    const blogCoverUrl = book.get('blogCoverUrl');
+    const blogCoverUrl = book.blogCoverUrl;
     if (!coverImageUrl && !blogCoverUrl) {
       return res.status(400).json({
         success: false,
@@ -3806,18 +4298,15 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
     }
     if (chapterTitle) {
       console.log('📝 Using custom Chinese title:', chapterTitle);
-      // Temporarily update contentObj for video generation
-      contentObj.set('chapterTitle', chapterTitle);
+      // Note: This is not saved to database, only used for video generation
     }
     if (chapterTitleEn) {
       console.log('📝 Using custom English title:', chapterTitleEn);
-      // Temporarily update contentObj for video generation
-      contentObj.set('chapterTitleEn', chapterTitleEn);
+      // Note: This is not saved to database, only used for video generation
     }
 
     // Update status to generating
-    contentObj.set('videoStatus', 'generating');
-    await contentObj.save();
+    await db.update('ExtractedContent', { videoStatus: 'generating' }, 'id = ?', [contentId]);
 
     console.log(`📝 Starting ${language === 'zh' ? 'Chinese' : 'English'} video generation (using blog cover image)`);
     sendProgress('Step 1: Downloading audio file', 10);
@@ -4143,15 +4632,26 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
             '-preset medium',
             '-crf 23',
             '-pix_fmt yuv420p',
+            '-profile:v baseline', // 使用baseline profile确保最大兼容性
+            '-level 3.0', // H.264 level 3.0，确保兼容性
             '-c:a aac',
             '-b:a 128k',
-            '-shortest'
+            '-shortest',
+            '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
           ]);
       } else {
+        // 即使没有字幕，也重新编码以确保faststart生效和兼容性
         ffmpegProcess = ffmpegProcess.outputOptions([
-          '-c:v copy',
+          '-c:v libx264',
+          '-preset fast',
+          '-crf 23',
+          '-pix_fmt yuv420p',
+          '-profile:v baseline', // 使用baseline profile确保最大兼容性
+          '-level 3.0', // H.264 level 3.0，确保兼容性
           '-c:a aac',
-          '-shortest'
+          '-b:a 128k',
+          '-shortest',
+          '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
         ]);
       }
       
@@ -4200,79 +4700,81 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
           console.error('❌ FFmpeg合并失败:', err);
           console.error('❌ FFmpeg错误详情:', err.message);
           console.error('❌ FFmpeg错误堆栈:', err.stack);
-          // 如果copy失败，尝试重新编码
-          if (err.message && err.message.includes('copy')) {
-            console.log('⚠️ 视频流复制失败，尝试重新编码...');
-            sendProgress('视频流复制失败，尝试重新编码', 80);
-            let fallbackProcess = ffmpeg()
-              .input(tempVideoPath)
-              .input(tempAudioPath);
-            
-            // 如果有字幕，添加字幕滤镜
-            if (tempSubtitlePath) {
-              fallbackProcess = fallbackProcess
-                .complexFilter([
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
-                  `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
-                ])
-                .outputOptions([
-                  '-map', '[outv]',
-                  '-map', '1:a',  // 映射音频流（第二个输入文件的音频）
-                  '-c:v libx264',
-                  '-preset ultrafast',
-                  '-crf 23',
-                  '-pix_fmt yuv420p',
-                  '-c:a aac',
-                  '-shortest'
-                ]);
-            } else {
-              fallbackProcess = fallbackProcess.outputOptions([
+          // 如果编码失败，尝试使用更快的预设
+          console.log('⚠️ 视频编码失败，尝试使用ultrafast预设...');
+          sendProgress('视频编码失败，尝试使用ultrafast预设', 80);
+          let fallbackProcess = ffmpeg()
+            .input(tempVideoPath)
+            .input(tempAudioPath);
+          
+          // 如果有字幕，添加字幕滤镜
+          if (tempSubtitlePath) {
+            fallbackProcess = fallbackProcess
+              .complexFilter([
+                `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
+                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
+              ])
+              .outputOptions([
+                '-map', '[outv]',
+                '-map', '1:a',  // 映射音频流（第二个输入文件的音频）
                 '-c:v libx264',
                 '-preset ultrafast',
                 '-crf 23',
                 '-pix_fmt yuv420p',
-                '-s 720x1280', // 强制9:16竖屏分辨率
-                '-aspect 9:16', // 设置宽高比
+                '-profile:v baseline', // 使用baseline profile确保最大兼容性
+                '-level 3.0', // H.264 level 3.0，确保兼容性
                 '-c:a aac',
-                '-shortest'
+                '-b:a 128k',
+                '-shortest',
+                '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
               ]);
-            }
-            
-            fallbackProcess = fallbackProcess.output(tempOutputPath)
-              .on('end', () => {
-                console.log('✅ 视频合并完成（使用重新编码）');
-                sendProgress('Step 2: Video merge completed', 85);
-                resolve(null);
-              })
-              .on('error', (fallbackErr) => {
-                console.error('❌ 重新编码也失败:', fallbackErr);
-                reject(fallbackErr);
-              })
-              .run();
           } else {
-            reject(err);
+            fallbackProcess = fallbackProcess.outputOptions([
+              '-c:v libx264',
+              '-preset ultrafast',
+              '-crf 23',
+              '-pix_fmt yuv420p',
+              '-profile:v baseline', // 使用baseline profile确保最大兼容性
+              '-level 3.0', // H.264 level 3.0，确保兼容性
+              '-s 720x1280', // 强制9:16竖屏分辨率
+              '-aspect 9:16', // 设置宽高比
+              '-c:a aac',
+              '-b:a 128k',
+              '-shortest',
+              '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
+            ]);
           }
+          
+          fallbackProcess = fallbackProcess.output(tempOutputPath)
+            .on('end', () => {
+              console.log('✅ 视频合并完成（使用重新编码）');
+              sendProgress('Step 2: Video merge completed', 85);
+              resolve(null);
+            })
+            .on('error', (fallbackErr) => {
+              console.error('❌ 重新编码也失败:', fallbackErr);
+              reject(fallbackErr);
+            })
+            .run();
         })
         .run();
     });
     
-    // 上传合并后的视频到LeanCloud
+    // 上传合并后的视频到七牛云
     sendProgress('Step 2: Uploading video', 90);
     const outputBuffer = await fs.readFile(tempOutputPath);
-    const videoFile = new AV.File(`video_${contentId}_${language}_${timestamp}.mp4`, outputBuffer, 'video/mp4');
-    await videoFile.save();
-    const finalVideoUrl = videoFile.url();
+    const finalVideoUrl = await uploadFile(outputBuffer, `video_${contentId}_${language}_${timestamp}.mp4`, 'video/mp4', 'videos');
     console.log('✅ 视频上传成功，URL:', finalVideoUrl);
     sendProgress('Step 2: Video upload completed', 95);
     
     // 更新ExtractedContent记录
+    const updateData = { videoStatus: 'completed' };
     if (language === 'en') {
-      contentObj.set('videoUrlEn', finalVideoUrl);
+      updateData.videoUrlEn = finalVideoUrl;
     } else {
-      contentObj.set('videoUrl', finalVideoUrl);
+      updateData.videoUrl = finalVideoUrl;
     }
-    contentObj.set('videoStatus', 'completed');
-    await contentObj.save();
+    await db.update('ExtractedContent', updateData, 'id = ?', [contentId]);
     
     // 清理临时文件（包括字幕文件）
     const cleanupFiles = [tempVideoPath, tempAudioPath, tempOutputPath, tempSubtitlePath].filter(Boolean);
@@ -4353,11 +4855,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
       
       // 更新状态为失败
       try {
-        const content = await new AV.Query('ExtractedContent').get(req.params.contentId);
-        if (content) {
-          content.set('videoStatus', 'failed');
-          await content.save();
-        }
+        await db.update('ExtractedContent', { videoStatus: 'failed' }, 'id = ?', [req.params.contentId]);
       } catch (updateError) {
         console.error('❌ 更新内容状态失败:', updateError);
       }
@@ -4415,7 +4913,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
   
   try {
     // 获取内容信息
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -4423,7 +4921,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
       });
     }
 
-    const textContent = contentObj.get('summary') || contentObj.get('chapterTitle') || '';
+    const textContent = contentObj.summary || contentObj.chapterTitle || '';
     if (!textContent) {
       return res.status(400).json({
         success: false,
@@ -4432,17 +4930,19 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
     }
 
     // 更新状态为生成中
-    contentObj.set('videoStatus', 'generating');
-    await contentObj.save();
+    await db.update('ExtractedContent', { videoStatus: 'generating' }, 'id = ?', [contentId]);
 
     console.log('📝 开始根据文字生成视频，文本:', textContent.substring(0, 50) + '...');
 
-    // 验证Doubao API配置
-    console.log('🔑 Doubao API Key:', DOUBAO_API_KEY ? `${DOUBAO_API_KEY.substring(0, 20)}...` : '未设置');
-    console.log('🔑 Doubao Model ID:', DOUBAO_MODEL_ID);
-    if (!DOUBAO_API_KEY) {
-      throw new Error('Doubao API Key未配置，请设置ARK_API_KEY或DOUBAO_API_KEY环境变量');
-    }
+    // 豆包视频生成服务已禁用
+    throw new Error('豆包视频生成服务已禁用，无法生成视频');
+    
+    // 验证Doubao API配置（已禁用）
+    // console.log('🔑 Doubao API Key:', DOUBAO_API_KEY ? `${DOUBAO_API_KEY.substring(0, 20)}...` : '未设置');
+    // console.log('🔑 Doubao Model ID:', DOUBAO_MODEL_ID);
+    // if (!DOUBAO_API_KEY) {
+    //   throw new Error('Doubao API Key未配置，请设置ARK_API_KEY或DOUBAO_API_KEY环境变量');
+    // }
 
     // 步骤1: 先获取音频时长，以便计算需要生成多少段视频
     console.log('📥 步骤1: 获取音频时长');
@@ -4510,7 +5010,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
     };
     
     // 判断是否是中文视频（如果存在中文音频URL，则为中文视频）
-    const isChineseVideo = !!contentObj.get('audioUrl');
+    const isChineseVideo = !!contentObj.audioUrl;
     
     // 辅助函数：生成单段视频
     const generateVideoSegment = async (segmentText, segmentIndex) => {
@@ -4858,19 +5358,15 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
       console.warn('⚠️ 清理拼接视频文件失败:', e);
     }
 
-    // 步骤4: 上传合并后的视频到LeanCloud
+    // 步骤4: 上传合并后的视频到七牛云
     console.log('📤 步骤4: 上传合并后的视频');
     const outputVideoBuffer = await fs.readFile(tempOutputPath);
     const videoFileName = `video_${contentId}_${timestamp}.mp4`;
-    const videoFile = new AV.File(videoFileName, outputVideoBuffer, 'video/mp4');
-    await videoFile.save();
-    const finalVideoUrl = videoFile.url();
+    const finalVideoUrl = await uploadFile(outputVideoBuffer, videoFileName, 'video/mp4', 'videos');
     console.log('✅ 视频上传成功，URL:', finalVideoUrl);
 
     // 更新内容记录
-    contentObj.set('videoStatus', 'completed');
-    contentObj.set('videoUrl', finalVideoUrl);
-    await contentObj.save();
+    await db.update('ExtractedContent', { videoStatus: 'completed', videoUrl: finalVideoUrl }, 'id = ?', [contentId]);
 
     // 清理临时文件
     try {
@@ -4904,11 +5400,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
     
     // 更新状态为失败
     try {
-      const content = await new AV.Query('ExtractedContent').get(req.params.contentId);
-      if (content) {
-        content.set('videoStatus', 'failed');
-        await content.save();
-      }
+      await db.update('ExtractedContent', { videoStatus: 'failed' }, 'id = ?', [req.params.contentId]);
     } catch (updateError) {
       console.error('更新内容状态失败:', updateError);
     }
@@ -4961,11 +5453,7 @@ router.post('/content/:contentId/generate-avatar', async (req, res) => {
     console.log('✅ 使用预定义数字人形象图片:', avatarImageUrl);
 
     // 更新内容记录
-    const content = await new AV.Query('ExtractedContent').get(contentId);
-    if (content) {
-      content.set('avatarImageUrl', avatarImageUrl);
-      await content.save();
-    }
+    await db.update('ExtractedContent', { avatarImageUrl: avatarImageUrl }, 'id = ?', [contentId]);
 
     res.json({
       success: true,
@@ -4998,7 +5486,7 @@ router.post('/content/:contentId/update-summary', async (req, res) => {
     }
     
     // Get content object
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -5007,31 +5495,32 @@ router.post('/content/:contentId/update-summary', async (req, res) => {
     }
     
     // Update fields
-    AV.Cloud.useMasterKey();
+    const updateData = {};
     if (summary !== undefined) {
-      contentObj.set('summary', summary);
+      updateData.summary = summary;
     }
     if (summaryEn !== undefined) {
-      contentObj.set('summaryEn', summaryEn);
+      updateData.summaryEn = summaryEn;
     }
     if (chapterTitle !== undefined) {
-      contentObj.set('chapterTitle', chapterTitle);
+      updateData.chapterTitle = chapterTitle;
     }
     if (chapterTitleEn !== undefined) {
-      contentObj.set('chapterTitleEn', chapterTitleEn);
+      updateData.chapterTitleEn = chapterTitleEn;
     }
-    await contentObj.save();
+    await db.update('ExtractedContent', updateData, 'id = ?', [contentId]);
     
+    const updatedContent = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     console.log(`✅ Content updated: contentId=${contentId}`);
     
     res.json({
       success: true,
       message: 'Content updated successfully',
       data: {
-        summary: contentObj.get('summary'),
-        summaryEn: contentObj.get('summaryEn'),
-        chapterTitle: contentObj.get('chapterTitle'),
-        chapterTitleEn: contentObj.get('chapterTitleEn')
+        summary: updatedContent.summary,
+        summaryEn: updatedContent.summaryEn,
+        chapterTitle: updatedContent.chapterTitle,
+        chapterTitleEn: updatedContent.chapterTitleEn
       }
     });
   } catch (error) {
@@ -5051,7 +5540,7 @@ router.post('/content/:contentId/translate', async (req, res) => {
     const { contentId } = req.params;
     
     // 获取内容对象
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -5059,38 +5548,42 @@ router.post('/content/:contentId/translate', async (req, res) => {
       });
     }
     
-    const chapterTitle = contentObj.get('chapterTitle');
-    const summary = contentObj.get('summary');
+    const chapterTitle = contentObj.chapterTitle;
+    const summary = contentObj.summary;
     
-    let chapterTitleEn = contentObj.get('chapterTitleEn') || '';
-    let summaryEn = contentObj.get('summaryEn') || '';
+    let chapterTitleEn = contentObj.chapterTitleEn || '';
+    let summaryEn = contentObj.summaryEn || '';
     
     // 翻译标题
     if ((!chapterTitleEn || chapterTitleEn.trim() === '') && chapterTitle) {
       console.log(`🌐 [手动翻译] 章节标题: ${chapterTitle}`);
       try {
-        const translateTitleResponse = await fetch(DEEPSEEK_API_URL, {
+        const translateTitleResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+            'Authorization': `Bearer ${ALIYUN_API_KEY}`
           },
           body: JSON.stringify({
-            model: 'deepseek-chat',
-            messages: [
-              {
-                role: 'user',
-                content: `请将以下中文章节标题翻译成英文，只返回英文翻译，不要添加任何其他内容：\n${chapterTitle}`
-              }
-            ],
-            temperature: 0.3,
-            max_tokens: 100
+            model: 'qwen-long-latest',
+            input: {
+              messages: [
+                {
+                  role: 'user',
+                  content: `请将以下中文章节标题翻译成英文，只返回英文翻译，不要添加任何其他内容：\n${chapterTitle}`
+                }
+              ]
+            },
+            parameters: {
+              temperature: 0.3,
+              max_tokens: 100
+            }
           })
         });
         
         if (translateTitleResponse.ok) {
           const translateTitleData = await translateTitleResponse.json();
-          chapterTitleEn = translateTitleData.choices[0]?.message?.content?.trim() || '';
+          chapterTitleEn = translateTitleData.output?.choices?.[0]?.message?.content?.trim() || translateTitleData.output?.text?.trim() || '';
           if (chapterTitleEn) {
             console.log(`✅ [手动翻译完成] 标题: ${chapterTitleEn}`);
           }
@@ -5104,28 +5597,32 @@ router.post('/content/:contentId/translate', async (req, res) => {
     if ((!summaryEn || summaryEn.trim() === '') && summary) {
       console.log(`🌐 [手动翻译] 摘要: ${summary.substring(0, 50)}...`);
       try {
-        const translateSummaryResponse = await fetch(DEEPSEEK_API_URL, {
+        const translateSummaryResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+            'Authorization': `Bearer ${ALIYUN_API_KEY}`
           },
           body: JSON.stringify({
-            model: 'deepseek-chat',
-            messages: [
-              {
-                role: 'user',
-                content: `请将以下中文内容摘要完整翻译成英文，保持所有细节，不要限制字数，只返回英文翻译，不要添加任何其他内容：\n${summary}`
-              }
-            ],
-            temperature: 0.3,
-            max_tokens: 1000
+            model: 'qwen-long-latest',
+            input: {
+              messages: [
+                {
+                  role: 'user',
+                  content: `请将以下中文内容摘要完整翻译成英文，保持所有细节，不要限制字数，只返回英文翻译，不要添加任何其他内容：\n${summary}`
+                }
+              ]
+            },
+            parameters: {
+              temperature: 0.3,
+              max_tokens: 2000
+            }
           })
         });
         
         if (translateSummaryResponse.ok) {
           const translateSummaryData = await translateSummaryResponse.json();
-          summaryEn = translateSummaryData.choices[0]?.message?.content?.trim() || '';
+          summaryEn = translateSummaryData.output?.choices?.[0]?.message?.content?.trim() || translateSummaryData.output?.text?.trim() || '';
           if (summaryEn) {
             // 保持完整，不限制字数
             console.log(`✅ [手动翻译完成] 摘要: ${summaryEn.substring(0, 100)}... (总长度: ${summaryEn.length}字符)`);
@@ -5137,10 +5634,12 @@ router.post('/content/:contentId/translate', async (req, res) => {
     }
     
     // 保存翻译结果
-    AV.Cloud.useMasterKey();
-    if (chapterTitleEn) contentObj.set('chapterTitleEn', chapterTitleEn);
-    if (summaryEn) contentObj.set('summaryEn', summaryEn);
-    await contentObj.save();
+    const updateData = {};
+    if (chapterTitleEn) updateData.chapterTitleEn = chapterTitleEn;
+    if (summaryEn) updateData.summaryEn = summaryEn;
+    if (Object.keys(updateData).length > 0) {
+      await db.update('ExtractedContent', updateData, 'id = ?', [contentId]);
+    }
     
     res.json({
       success: true,
@@ -5232,7 +5731,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     sendProgress('Step 1: Preparing to generate audio and subtitles', 5);
     
     // 获取内容对象
-    const contentObj = await new AV.Query('ExtractedContent').get(contentId);
+    const contentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
     if (!contentObj) {
       return res.status(404).json({
         success: false,
@@ -5241,7 +5740,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     }
     
     // 获取书籍信息以获取博客封面图
-    const bookId = contentObj.get('book')?.id || contentObj.get('bookId');
+    const bookId = contentObj.bookId;
     if (!bookId) {
       return res.status(400).json({
         success: false,
@@ -5249,7 +5748,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       });
     }
     
-    const book = await new AV.Query('Book').get(bookId);
+    const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
       return res.status(404).json({
         success: false,
@@ -5261,7 +5760,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     const { coverImageUrl, chapterTitle, chapterTitleEn, summary, summaryEn, includeOpeningText = true } = req.body;
     
     // Use custom cover image if provided, otherwise use book's blog cover image
-    const blogCoverUrl = book.get('blogCoverUrl');
+    const blogCoverUrl = book.blogCoverUrl;
     const finalCoverImageUrl = coverImageUrl || blogCoverUrl;
     if (!finalCoverImageUrl) {
       return res.status(400).json({
@@ -5271,10 +5770,33 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     }
     
     // Use custom titles/summaries if provided, otherwise get from database
-    let finalChapterTitle = chapterTitle !== undefined ? chapterTitle : (contentObj.get('chapterTitle') || '');
-    let finalChapterTitleEn = chapterTitleEn !== undefined ? chapterTitleEn : (contentObj.get('chapterTitleEn') || '');
-    let finalSummary = summary !== undefined ? summary : (contentObj.get('summary') || '');
-    let finalSummaryEn = summaryEn !== undefined ? summaryEn : (contentObj.get('summaryEn') || '');
+    let finalChapterTitle = chapterTitle !== undefined ? chapterTitle : (contentObj.chapterTitle || '');
+    let finalChapterTitleEn = chapterTitleEn !== undefined ? chapterTitleEn : (contentObj.chapterTitleEn || '');
+    let finalSummary = summary !== undefined ? summary : (contentObj.summary || '');
+    let finalSummaryEn = summaryEn !== undefined ? summaryEn : (contentObj.summaryEn || '');
+    
+    // 记录从数据库获取的原始值
+    console.log('📋 从数据库获取的原始值:');
+    console.log(`   summary长度: ${contentObj.summary ? contentObj.summary.length : 0}字符`);
+    console.log(`   summaryEn长度: ${contentObj.summaryEn ? contentObj.summaryEn.length : 0}字符`);
+    console.log(`   finalSummaryEn长度: ${finalSummaryEn ? finalSummaryEn.length : 0}字符`);
+    
+    // 如果finalSummaryEn为空或太短，尝试重新查询数据库
+    if (!finalSummaryEn || finalSummaryEn.trim().length < 50) {
+      console.warn('⚠️ finalSummaryEn为空或太短，尝试重新查询数据库...');
+      try {
+        const refreshedContentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
+        if (refreshedContentObj && refreshedContentObj.summaryEn) {
+          const refreshedSummaryEn = refreshedContentObj.summaryEn || '';
+          if (refreshedSummaryEn && refreshedSummaryEn.length > (finalSummaryEn?.length || 0)) {
+            console.log(`✅ 重新查询后获取到更长的summaryEn: ${refreshedSummaryEn.length}字符`);
+            finalSummaryEn = refreshedSummaryEn;
+          }
+        }
+      } catch (fetchError) {
+        console.error('❌ 重新查询数据库失败:', fetchError.message);
+      }
+    }
     
     // Log custom values if provided
     if (coverImageUrl) {
@@ -5282,62 +5804,60 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     }
     if (chapterTitleEn !== undefined) {
       console.log('📝 Using custom English title:', finalChapterTitleEn);
-      // Temporarily update contentObj for video generation
-      contentObj.set('chapterTitleEn', finalChapterTitleEn);
     }
     if (summaryEn !== undefined) {
       console.log('📝 Using custom English summary:', finalSummaryEn.substring(0, 50) + '...');
-      // Temporarily update contentObj for video generation
-      contentObj.set('summaryEn', finalSummaryEn);
     }
     
     // 获取中文内容（如果未提供自定义值）
-    const chapterTitleDb = contentObj.get('chapterTitle') || '';
-    const summaryDb = contentObj.get('summary') || '';
+    const chapterTitleDb = contentObj.chapterTitle || '';
+    const summaryDb = contentObj.summary || '';
     
     // 获取或翻译英文内容（如果未提供自定义值）
-    let chapterTitleEnDb = contentObj.get('chapterTitleEn') || '';
-    let summaryEnDb = contentObj.get('summaryEn') || '';
+    let chapterTitleEnDb = contentObj.chapterTitleEn || '';
+    let summaryEnDb = contentObj.summaryEn || '';
     
     console.log('📋 检查英文翻译状态...');
     console.log('   标题:', finalChapterTitleEn ? '已有' : '需要翻译');
     console.log('   摘要:', finalSummaryEn ? '已有' : '需要翻译');
     
-    // 如果缺少英文翻译，使用Deepseek翻译
+    // 如果缺少英文翻译，使用阿里云DashScope qwen-long-latest翻译
     if (!finalChapterTitleEn || !finalSummaryEn) {
-      console.log('🌐 开始使用Deepseek翻译内容...');
+      console.log('🌐 开始使用阿里云DashScope qwen-long-latest翻译内容...');
       sendProgress('Step 1: Translating content to English', 10);
       
       // 翻译标题
       if (!finalChapterTitleEn && finalChapterTitle) {
         console.log(`🌐 [翻译] 章节标题: ${finalChapterTitle}`);
         try {
-          const translateTitleResponse = await fetch(DEEPSEEK_API_URL, {
+          const translateTitleResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+              'Authorization': `Bearer ${ALIYUN_API_KEY}`
             },
             body: JSON.stringify({
-              model: 'deepseek-chat',
-              messages: [
-                {
-                  role: 'user',
-                  content: `请将以下中文章节标题翻译成英文，只返回英文翻译，不要添加任何其他内容：\n${finalChapterTitle}`
-                }
-              ],
-              temperature: 0.3,
-              max_tokens: 100
+              model: 'qwen-long-latest',
+              input: {
+                messages: [
+                  {
+                    role: 'user',
+                    content: `请将以下中文章节标题翻译成英文，只返回英文翻译，不要添加任何其他内容：\n${finalChapterTitle}`
+                  }
+                ]
+              },
+              parameters: {
+                temperature: 0.3,
+                max_tokens: 100
+              }
             })
           });
           
           if (translateTitleResponse.ok) {
             const translateTitleData = await translateTitleResponse.json();
-            finalChapterTitleEn = translateTitleData.choices[0]?.message?.content?.trim() || '';
+            finalChapterTitleEn = translateTitleData.output?.choices?.[0]?.message?.content?.trim() || translateTitleData.output?.text?.trim() || '';
             if (finalChapterTitleEn) {
               console.log(`✅ [翻译完成] 标题: ${finalChapterTitleEn}`);
-              // Update contentObj for video generation
-              contentObj.set('chapterTitleEn', finalChapterTitleEn);
             }
           }
         } catch (error) {
@@ -5346,34 +5866,99 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       }
       
       // 翻译摘要
-      if (!summaryEn && summary) {
-        console.log(`🌐 [翻译] 摘要: ${summary.substring(0, 50)}...`);
+      if (!finalSummaryEn && finalSummary) {
+        console.log(`🌐 [翻译] 摘要: ${finalSummary.substring(0, 50)}...`);
+        console.log(`🌐 [翻译] 摘要完整长度: ${finalSummary.length}字符`);
+        console.log(`🌐 [翻译] 摘要结尾: ...${finalSummary.substring(Math.max(0, finalSummary.length - 100))}`);
+        
+        // 如果摘要太长，可能需要分段翻译
+        const maxTranslationLength = 3000; // 单次翻译的最大字符数
+        let translatedParts = [];
+        
+        if (finalSummary.length > maxTranslationLength) {
+          console.log(`⚠️ 摘要过长(${finalSummary.length}字符)，将分段翻译`);
+          // 按句子分段（尽量在句号、问号、感叹号处断开）
+          const sentences = finalSummary.split(/([。！？.!?])/);
+          let currentChunk = '';
+          
+          for (let i = 0; i < sentences.length; i += 2) {
+            const sentence = sentences[i]?.trim();
+            const punctuation = sentences[i + 1] || '';
+            if (!sentence) continue;
+            
+            const fullSentence = sentence + punctuation;
+            if ((currentChunk + fullSentence).length > maxTranslationLength && currentChunk) {
+              // 翻译当前chunk
+              translatedParts.push(currentChunk);
+              currentChunk = fullSentence;
+            } else {
+              currentChunk += fullSentence;
+            }
+          }
+          
+          if (currentChunk) {
+            translatedParts.push(currentChunk);
+          }
+        } else {
+          translatedParts.push(finalSummary);
+        }
+        
+        console.log(`📋 将分${translatedParts.length}段翻译`);
+        
         try {
-          const translateSummaryResponse = await fetch(DEEPSEEK_API_URL, {
+          // 逐段翻译
+          for (let i = 0; i < translatedParts.length; i++) {
+            const part = translatedParts[i];
+            console.log(`🌐 [翻译] 第${i + 1}/${translatedParts.length}段，长度: ${part.length}字符`);
+            
+          const translateSummaryResponse = await fetch(DASHSCOPE_CHAT_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+              'Authorization': `Bearer ${ALIYUN_API_KEY}`
             },
             body: JSON.stringify({
-              model: 'deepseek-chat',
-              messages: [
-                {
-                  role: 'user',
-                  content: `请将以下中文内容摘要完整翻译成英文，保持所有细节，不要限制字数，只返回英文翻译，不要添加任何其他内容：\n${summary}`
-                }
-              ],
-              temperature: 0.3,
-              max_tokens: 1000
+              model: 'qwen-long-latest',
+              input: {
+                messages: [
+                  {
+                    role: 'user',
+                    content: `请将以下中文内容摘要完整翻译成英文，保持所有细节，不要限制字数，只返回英文翻译，不要添加任何其他内容：\n${part}`
+                  }
+                ]
+              },
+              parameters: {
+                temperature: 0.3,
+                max_tokens: 4000  // 增加token限制以确保完整翻译
+              }
             })
           });
           
           if (translateSummaryResponse.ok) {
             const translateSummaryData = await translateSummaryResponse.json();
-            summaryEn = translateSummaryData.choices[0]?.message?.content?.trim() || '';
-            if (summaryEn) {
-              console.log(`✅ [翻译完成] 摘要: ${summaryEn.substring(0, 50)}...`);
+              const translatedPart = translateSummaryData.output?.choices?.[0]?.message?.content?.trim() || translateSummaryData.output?.text?.trim() || '';
+              if (translatedPart) {
+                console.log(`✅ [翻译完成] 第${i + 1}段: ${translatedPart.substring(0, 50)}... (长度: ${translatedPart.length}字符)`);
+                if (!finalSummaryEn) {
+                  finalSummaryEn = translatedPart;
+                } else {
+                  finalSummaryEn += ' ' + translatedPart;
+                }
+              } else {
+                console.warn(`⚠️ [翻译警告] 第${i + 1}段翻译返回为空`);
+              }
+            } else {
+              const errorText = await translateSummaryResponse.text();
+              console.error(`❌ [翻译失败] 第${i + 1}段翻译API返回错误: ${translateSummaryResponse.status} - ${errorText}`);
             }
+          }
+          
+          if (finalSummaryEn) {
+            finalSummaryEn = finalSummaryEn.trim();
+            console.log(`✅ [翻译完成] 完整摘要: ${finalSummaryEn.substring(0, 100)}... (总长度: ${finalSummaryEn.length}字符)`);
+            console.log(`✅ [翻译完成] 摘要结尾: ...${finalSummaryEn.substring(Math.max(0, finalSummaryEn.length - 100))}`);
+          } else {
+            console.warn(`⚠️ [翻译警告] 所有段落翻译后仍为空`);
           }
         } catch (error) {
           console.error('❌ [翻译失败] 摘要:', error.message);
@@ -5381,38 +5966,50 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       }
       
       // 保存翻译结果
-      if (chapterTitleEn || summaryEn) {
-        if (chapterTitleEn) contentObj.set('chapterTitleEn', chapterTitleEn);
-        if (summaryEn) contentObj.set('summaryEn', summaryEn);
-        await contentObj.save();
+      if (finalChapterTitleEn || finalSummaryEn) {
+        const updateData = {};
+        if (finalChapterTitleEn) {
+          updateData.chapterTitleEn = finalChapterTitleEn;
+        }
+        if (finalSummaryEn) {
+          updateData.summaryEn = finalSummaryEn;
+        }
+        await db.update('ExtractedContent', updateData, 'id = ?', [contentId]);
         console.log('✅ 英文翻译已保存');
       }
     }
     
-    // 检查翻译结果
-    if (!chapterTitleEn || !summaryEn) {
+    // 检查翻译结果，使用finalSummaryEn
+    if (!finalChapterTitleEn || !finalSummaryEn) {
+      console.error('❌ 英文翻译检查失败:');
+      console.error(`   标题: ${finalChapterTitleEn ? '✓' : '✗'}`);
+      console.error(`   摘要: ${finalSummaryEn ? `✓ (${finalSummaryEn.length}字符)` : '✗'}`);
       return res.status(400).json({
         success: false,
         message: '英文翻译失败，无法生成英文视频'
       });
     }
     
-    // 步骤1: 使用腾讯云TTS生成英文音频
-    console.log('🎵 步骤1: 使用腾讯云TTS生成英文音频...');
+    // 确保finalSummaryEn包含完整内容
+    console.log(`📝 最终使用的英文摘要长度: ${finalSummaryEn.length}字符`);
+    console.log(`📝 最终使用的英文摘要预览: ${finalSummaryEn.substring(0, 200)}...`);
+    
+    // 步骤1: 使用阿里云DashScope Qwen TTS生成英文音频
+    console.log('🎵 步骤1: 使用阿里云DashScope Qwen TTS生成英文音频...');
     
     // 获取集数信息，用于生成开场白
-    const segmentIndexEn = contentObj.get('segmentIndex') || 0;
-    const bookObjEn = contentObj.get('book');
-    const bookTitleEn = bookObjEn ? (await bookObjEn.fetch()).get('title') : '';
+    const segmentIndexEn = contentObj.segmentIndex || 0;
+    const bookObjEn = await db.findOne('SELECT * FROM Book WHERE id = ?', [contentObj.bookId]);
+    const bookTitleEn = bookObjEn ? bookObjEn.title : '';
     
     // 查询同一本书的所有内容段，获取总集数
     let totalSegmentsEn = 0;
     if (bookObjEn) {
-      const allSegmentsEn = await new AV.Query('ExtractedContent')
-        .equalTo('book', bookObjEn)
-        .ascending('segmentIndex')
-        .find();
-      totalSegmentsEn = allSegmentsEn.length;
+      const allSegmentsEn = await db.query(
+        'SELECT COUNT(*) as count FROM ExtractedContent WHERE bookId = ?',
+        [contentObj.bookId]
+      );
+      totalSegmentsEn = allSegmentsEn[0]?.count || 0;
     }
     
     // 根据集数生成英文开场白
@@ -5438,6 +6035,25 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     }
     
     // 根据用户选择决定是否添加开场白
+    // 确保finalSummaryEn是完整的，没有被截断
+    console.log(`📝 检查finalSummaryEn完整性:`);
+    console.log(`   finalSummaryEn长度: ${finalSummaryEn ? finalSummaryEn.length : 0}字符`);
+    console.log(`   finalSummaryEn预览（前200字符）: ${finalSummaryEn ? finalSummaryEn.substring(0, 200) : '空'}...`);
+    console.log(`   finalSummaryEn结尾（后100字符）: ${finalSummaryEn && finalSummaryEn.length > 100 ? '...' + finalSummaryEn.substring(finalSummaryEn.length - 100) : finalSummaryEn || '空'}`);
+    
+    // 如果finalSummaryEn为空或太短，尝试从数据库重新获取
+    if (!finalSummaryEn || finalSummaryEn.trim().length < 50) {
+      console.warn('⚠️ finalSummaryEn为空或太短，尝试从数据库重新获取...');
+      const refreshedContentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
+      if (refreshedContentObj) {
+        const dbSummaryEn = refreshedContentObj.summaryEn || '';
+        if (dbSummaryEn && dbSummaryEn.length > finalSummaryEn.length) {
+          console.log(`✅ 从数据库获取到更长的summaryEn: ${dbSummaryEn.length}字符`);
+          finalSummaryEn = dbSummaryEn;
+        }
+      }
+    }
+    
     let audioText = `${finalSummaryEn}`.trim();
     // 根据 includeOpeningText 选项决定是否添加开场白
     if (includeOpeningText && openingTextEn && openingTextEn.trim()) {
@@ -5448,177 +6064,244 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     if (includeOpeningText && openingTextEn) {
       console.log(`📝 开场白: ${openingTextEn}`);
     }
-    console.log('📝 英文文本:', finalAudioText.substring(0, 100) + '...');
-    console.log('📝 文本长度:', finalAudioText.length, '字符');
+    console.log('📝 最终英文文本长度:', finalAudioText.length, '字符');
+    console.log('📝 最终英文文本预览（前200字符）:', finalAudioText.substring(0, 200) + '...');
+    console.log('📝 最终英文文本结尾（后100字符）:', finalAudioText.length > 100 ? '...' + finalAudioText.substring(finalAudioText.length - 100) : finalAudioText);
     
-    audioText = finalAudioText;
+    // 使用阿里云DashScope Qwen TTS进行语音合成
+    console.log('🔵 ========== 使用阿里云DashScope Qwen TTS ==========');
+    console.log('🔵 语言: English');
+    console.log('🎵 调用阿里云DashScope TTS API，文本长度:', finalAudioText.length, '语言: English');
     
-    // 腾讯云长文本语音合成API（CreateTtsTask）支持最多5000字符
-    // 使用精品模型（大模型音色），支持中英文长文本合成
-    const MAX_TEXT_LENGTH = 5000;
-    if (audioText.length > MAX_TEXT_LENGTH) {
-      console.warn(`⚠️ 文本长度(${audioText.length}字符)超过限制(${MAX_TEXT_LENGTH}字符)，将截断文本`);
-      // 尝试在句号、感叹号或问号处截断，保持完整性
-      let truncated = audioText.substring(0, MAX_TEXT_LENGTH);
-      const lastPeriod = truncated.lastIndexOf('.');
-      const lastExclamation = truncated.lastIndexOf('!');
-      const lastQuestion = truncated.lastIndexOf('?');
-      const cutPoint = Math.max(lastPeriod, lastExclamation, lastQuestion);
-      
-      if (cutPoint > MAX_TEXT_LENGTH * 0.7) {
-        // 如果找到合适的截断点（在70%之后），则在该处截断
-        audioText = truncated.substring(0, cutPoint + 1);
-      } else {
-        // 否则直接截断到最大长度
-        audioText = truncated;
-      }
-      console.log(`📝 文本已截断到 ${audioText.length} 字符`);
-    }
+    // Qwen TTS音色：中英文都使用Ethan
+    const voice = 'Ethan';
+    console.log(`🎤 选择音色: ${voice} (英文)`);
+    console.log(`📝 生成英文音频，文本长度: ${finalAudioText.length}，内容预览: ${finalAudioText.substring(0, 100)}...`);
     
-    // 使用腾讯云长文本语音合成API（CreateTtsTask）生成英文音频
-    // 统一使用长文本API，与generate-audio路由保持一致
-    console.log('🎵 使用腾讯云长文本语音合成API（CreateTtsTask）生成英文音频...');
-    console.log('📝 文本长度:', audioText.length, '字符');
-    
-    // 初始化腾讯云TTS客户端
-      const TtsClient = tencentcloud.tts.v20190823.Client;
-      const tencentTtsClient = new TtsClient({
-        credential: {
-        secretId: process.env.TENCENT_SECRET_ID,
-        secretKey: process.env.TENCENT_SECRET_KEY,
-        },
-        region: 'ap-guangzhou',
-        profile: {
-          httpProfile: {
-            endpoint: 'tts.tencentcloudapi.com',
-          },
-        },
-      });
-      
-    // 使用长文本API（CreateTtsTask），使用精品模型（大模型音色）
-    // 英文音色：501008（长文本语音合成专用音色）
-    const voiceType = 501008; // 英文-长文本语音合成专用音色
-    const modelType = 1; // 精品模型（大模型音色）
-    
-    console.log(`🎤 使用音色类型: ${voiceType} (英文-长文本语音合成专用音色)`);
-    console.log(`🔧 使用模型类型: ${modelType} (精品模型-大模型音色)`);
-    
-    // 按照腾讯云API文档格式设置参数
-    const longTextParams = {
-        Text: audioText,
-      ProjectId: 0, // 项目ID，0表示默认项目
-      ModelType: modelType, // 模型类型：1-精品模型（大模型音色）
-      Volume: 0, // 音量：范围[-10, 10]，0为正常音量
-      Codec: 'mp3', // 音频格式：mp3、pcm
-      VoiceType: voiceType, // 英文音色：501008
-      SampleRate: 16000, // 采样率：16000或8000
-      PrimaryLanguage: 2, // 主语言：2-英文
-      Speed: 0 // 语速：范围[-2, 2]，0为正常语速
-    };
-    
-    console.log('📋 CreateTtsTask 请求参数:', JSON.stringify(longTextParams, null, 2));
+    // 调用阿里云DashScope Qwen TTS HTTP SSE API
+    const ALIYUN_TTS_URL = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
+    const ALIYUN_API_KEY = process.env.DASHSCOPE_API_KEY || 'sk-abe50fde91f242a682c8c6c189310db5';
     
     let englishAudioUrl;
+    let audioBuffer = null;
+    
     try {
-      // 创建长文本语音合成任务
-      const responseData = await tencentTtsClient.CreateTtsTask(longTextParams);
-      console.log('✅ 腾讯云长文本API响应:', JSON.stringify(responseData, null, 2));
-      
-      // 检查错误
-      if (responseData.Error) {
-        const error = responseData.Error;
-        console.error('❌ 腾讯云API错误:', JSON.stringify(error, null, 2));
-        console.error('❌ 错误代码:', error.Code);
-        console.error('❌ 错误消息:', error.Message);
-        console.error('❌ 请求参数:', JSON.stringify(longTextParams, null, 2));
-        
-        // 特殊处理资源包配额用完错误
-        const isResourcePackError = error.Code === 'UnsupportedOperation.PkgExhausted' || 
-                                    error.Code === 'ResourceInsufficient' ||
-                                    (error.Message && (
-                                      error.Message.includes('资源包') || 
-                                      error.Message.includes('resource pack') ||
-                                      error.Message.includes('配额') ||
-                                      error.Message.includes('quota') ||
-                                      error.Message.includes('exhausted') ||
-                                      error.Message.includes('allowance')
-                                    ));
-        
-        if (isResourcePackError) {
-          throw new Error('腾讯云资源包配额已用完，请前往腾讯云控制台购买"长文本语音合成-精品模型-预付费包"（ModelType: 1）。访问地址：https://console.cloud.tencent.com/tts');
+      const requestBody = {
+        model: 'qwen-tts',
+        input: {
+          text: finalAudioText,
+          voice: voice,
+          language_type: 'English'
         }
-        
-        throw new Error(`腾讯云API错误: ${error.Message || '未知错误'}`);
+      };
+      
+      console.log('📋 请求参数:', JSON.stringify(requestBody, null, 2));
+      
+      const ttsResponse = await fetch(ALIYUN_TTS_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ALIYUN_API_KEY}`,
+          'X-DashScope-SSE': 'enable' // 启用SSE流式响应
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      console.log('📥 响应状态:', ttsResponse.status, ttsResponse.statusText);
+      
+      if (!ttsResponse.ok) {
+        const errorText = await ttsResponse.text();
+        console.error('❌ 阿里云DashScope TTS API失败:', ttsResponse.status, errorText);
+        throw new Error(`阿里云DashScope TTS API失败: ${ttsResponse.status} ${ttsResponse.statusText} - ${errorText}`);
       }
       
-      // 长文本API返回TaskId，需要轮询查询结果
-      const taskId = responseData.Data?.TaskId;
-      if (!taskId) {
-        throw new Error('腾讯云API响应中未找到TaskId');
+      // 检查Content-Type判断响应格式
+      const contentType = ttsResponse.headers.get('content-type') || '';
+      console.log('📥 Content-Type:', contentType);
+      
+      let audioUrl = null;
+      let audioBase64 = null;
+      
+      if (contentType.includes('text/event-stream')) {
+        // SSE流式响应处理（与中文音频生成逻辑相同）
+        console.log('📥 检测到SSE流式响应');
+        const reader = ttsResponse.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        // 处理SSE行的辅助函数
+        function processSSELine(line) {
+          if (line.trim() === '' || line.startsWith(':')) return;
+          
+          if (line.startsWith('event:')) {
+            const eventType = line.substring(6).trim();
+            console.log('📥 SSE事件类型:', eventType);
+            return;
+          }
+          
+          if (line.startsWith('data: ')) {
+            try {
+              const jsonStr = line.substring(6).trim();
+              if (jsonStr === '[DONE]') {
+                console.log('✅ 收到流结束标记');
+                return;
+              }
+              
+              // 尝试解析JSON，如果失败则尝试修复
+              let data = null;
+              try {
+                data = JSON.parse(jsonStr);
+              } catch (parseError) {
+                if (jsonStr.includes('"url"')) {
+                  console.warn('⚠️ JSON解析失败，但检测到url字段，尝试提取:', jsonStr.substring(0, 500));
+                  const urlMatch = jsonStr.match(/"url"\s*:\s*"([^"]+)"/);
+                  if (urlMatch && urlMatch[1]) {
+                    audioUrl = urlMatch[1];
+                    console.log('✅ 从不完整的JSON中提取到音频URL:', audioUrl);
+                    return;
+                  }
+                }
+                if (!jsonStr.endsWith('}') && !jsonStr.endsWith(']')) {
+                  console.warn('⚠️ JSON可能不完整，跳过:', jsonStr.substring(0, 200));
+                  return;
+                }
+                throw parseError;
+              }
+              
+              if (!data) return;
+              console.log('📥 解析SSE数据:', JSON.stringify(data).substring(0, 300));
+              
+              if (data.code && data.message) {
+                const errorCode = data.code || 'UnknownError';
+                const errorMsg = data.message || '未知错误';
+                console.error('❌ API返回错误:', errorCode, errorMsg);
+                throw new Error(`阿里云DashScope TTS API错误: ${errorCode} - ${errorMsg}`);
       }
       
-      console.log('✅ 长文本语音合成任务已创建，TaskId:', taskId);
-      
-      // 轮询查询任务状态（最多等待60秒）
-      const maxAttempts = 30; // 最多查询30次
-      const pollInterval = 2000; // 每2秒查询一次
-      
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
-        // 按照腾讯云API文档格式设置查询参数
-        const queryParams = {
-          TaskId: taskId
-        };
-        console.log(`📋 DescribeTtsTaskStatus 请求参数 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryParams, null, 2));
-        
-        const queryResponse = await tencentTtsClient.DescribeTtsTaskStatus(queryParams);
-        console.log(`📊 查询任务状态 (${attempt + 1}/${maxAttempts}):`, JSON.stringify(queryResponse, null, 2));
-        
-        if (queryResponse.Error) {
-          throw new Error(`查询任务状态失败: ${queryResponse.Error.Message}`);
+              if (data.output && data.output.audio) {
+                const audio = data.output.audio;
+                console.log('📥 找到output.audio对象:', JSON.stringify(audio).substring(0, 200));
+                
+                if (audio.url && audio.url.length > 0) {
+                  audioUrl = audio.url;
+                  console.log('✅ 从output.audio.url获取到音频URL:', audioUrl);
+                }
+                
+                if (audio.data && audio.data.length > 0) {
+                  if (!audioBase64) {
+                    audioBase64 = '';
+                  }
+                  audioBase64 += audio.data;
+                  console.log('✅ 累积output.audio.data，当前总长度:', audioBase64.length);
+                }
+              }
+            } catch (e) {
+              console.warn('⚠️ 解析SSE数据失败:', e.message, '行内容:', line.substring(0, 500));
+            }
+          }
         }
         
-        const status = queryResponse.Data?.Status;
-        if (status === 2) { // 2表示任务完成
-          englishAudioUrl = queryResponse.Data?.ResultUrl;
-          if (englishAudioUrl) {
-            console.log('✅ 任务完成，获取到音频URL:', englishAudioUrl);
+        // 读取和处理SSE流数据
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buffer.trim()) {
+              console.log('📥 处理最后剩余的数据:', buffer.substring(0, 1000));
+              if (buffer.includes('"url"')) {
+                console.log('📥 检测到buffer中包含url字段');
+                const urlMatch = buffer.match(/"url"\s*:\s*"([^"]+)"/);
+                if (urlMatch && urlMatch[1]) {
+                  audioUrl = urlMatch[1];
+                  console.log('✅ 从buffer中提取到音频URL:', audioUrl);
+                }
+              }
+              const finalLines = buffer.split('\n');
+              for (const line of finalLines) {
+                if (line.trim() && !line.startsWith(':')) {
+                  processSSELine(line.trim());
+                }
+              }
+            }
             break;
           }
-        } else if (status === 3) { // 3表示任务失败
-          throw new Error(`任务失败: ${queryResponse.Data?.ErrorMsg || '未知错误'}`);
+          
+          const chunk = decoder.decode(value, { stream: true });
+          console.log('📥 收到SSE数据块（原始）:', chunk.substring(0, 200));
+          
+          // 检查chunk中是否包含URL
+          if (chunk.includes('"url"')) {
+            console.log('📥 检测到chunk中包含url字段');
+            const urlMatch = chunk.match(/"url"\s*:\s*"([^"]+)"/);
+            if (urlMatch && urlMatch[1]) {
+              audioUrl = urlMatch[1];
+              console.log('✅ 从chunk中提取到音频URL:', audioUrl);
         }
-        // status === 0 表示任务处理中，继续轮询
+          }
+          
+          buffer += chunk;
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (line.trim() && !line.startsWith(':')) {
+              processSSELine(line.trim());
+            }
+          }
       }
       
-      if (!englishAudioUrl) {
-        throw new Error('任务超时，未能获取音频URL');
+        console.log('📥 SSE流处理完成，audioUrl:', audioUrl ? `已获取: ${audioUrl.substring(0, 100)}...` : '未获取', 'audioBase64长度:', audioBase64 ? audioBase64.length : 0);
+      } else {
+        // 普通JSON响应
+        console.log('📥 检测到JSON响应');
+        const responseData = await ttsResponse.json();
+        console.log('📥 完整响应数据:', JSON.stringify(responseData, null, 2));
+        
+        if (responseData.output && responseData.output.audio) {
+          audioUrl = responseData.output.audio.url || responseData.output.audio;
+        }
+        if (responseData.audio) {
+          audioUrl = responseData.audio;
+        }
+        if (responseData.output && responseData.output.audio && responseData.output.audio.data) {
+          audioBase64 = responseData.output.audio.data;
+        }
       }
       
-      console.log('✅ 英文音频生成完成，URL:', englishAudioUrl);
-    } catch (tencentError) {
-      console.error('❌ 腾讯云TTS生成英文音频失败:', tencentError);
-      console.error('❌ 错误详情:', JSON.stringify(tencentError, Object.getOwnPropertyNames(tencentError)));
-      
-      const errorMessage = tencentError.message || '';
-      const errorCode = tencentError.code || tencentError.Code || '';
-      
-      // 特殊处理资源包配额用完错误
-      if (errorCode === 'UnsupportedOperation.PkgExhausted' || 
-          (errorMessage.toLowerCase().includes('resource pack') && errorMessage.toLowerCase().includes('exhausted')) ||
-          (errorMessage.toLowerCase().includes('allowance') && errorMessage.toLowerCase().includes('exhausted'))) {
-        throw new Error('腾讯云资源包配额已用完，请前往腾讯云控制台购买"长文本语音合成-精品模型-预付费包"（ModelType: 1）。访问地址：https://console.cloud.tencent.com/tts');
+      // 处理音频数据
+      if (audioUrl) {
+        console.log('📥 下载音频文件，URL:', audioUrl);
+        const audioResponse = await fetch(audioUrl);
+        if (!audioResponse.ok) {
+          throw new Error(`下载音频文件失败: ${audioResponse.statusText}`);
+        }
+        const audioArrayBuffer = await audioResponse.arrayBuffer();
+        audioBuffer = Buffer.from(audioArrayBuffer);
+        console.log('✅ 音频下载完成，Buffer长度:', audioBuffer.length);
+      } else if (audioBase64) {
+        console.log('📥 解码Base64音频数据，长度:', audioBase64.length);
+        audioBuffer = Buffer.from(audioBase64, 'base64');
+        console.log('✅ Base64解码完成，Buffer长度:', audioBuffer.length);
+      } else {
+        throw new Error('阿里云DashScope TTS API未返回音频数据（未找到audio或audio_base64字段）');
       }
       
-      // 其他错误直接抛出原始错误消息
-      throw new Error(`生成英文音频失败: ${errorMessage || '未知错误'}`);
+      // 将音频文件上传到七牛云
+      const fileName = `audio_en_${contentId}_${Date.now()}.mp3`;
+      
+      console.log('📤 开始上传英文音频到七牛云...');
+      sendProgress('Step 1: Uploading audio file', 30);
+      
+      englishAudioUrl = await uploadFile(audioBuffer, fileName, 'audio/mpeg', 'audios');
+      
+      console.log('✅ 英文音频上传成功，URL:', englishAudioUrl);
+      
+    } catch (error) {
+      console.error('❌ 阿里云DashScope TTS API调用失败:', error);
+      throw error;
     }
     
     // 更新内容对象
-    contentObj.set('audioUrlEn', englishAudioUrl);
-    contentObj.set('videoStatus', 'generating');
-    await contentObj.save();
+    await db.update('ExtractedContent', { audioUrlEn: englishAudioUrl, videoStatus: 'generating' }, 'id = ?', [contentId]);
     
     // 步骤2: 使用博客封面图生成英文视频（与中文视频逻辑相同）
     console.log('🎞️ 步骤2: 使用博客封面图生成英文视频...');
@@ -5626,14 +6309,14 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     const tempDir = os.tmpdir();
     const timestamp = Date.now();
     
-    // 下载英文音频
+    // 下载英文音频（从OSS）
     let finalEnglishAudioUrl = englishAudioUrl;
     if (finalEnglishAudioUrl.startsWith('http://')) {
       finalEnglishAudioUrl = finalEnglishAudioUrl.replace('http://', 'https://');
     }
     tempAudioPath = path.join(tempDir, `audio_en_${contentId}_${timestamp}.mp3`);
     console.log('📥 开始下载英文音频:', finalEnglishAudioUrl);
-    sendProgress('Step 1: Downloading audio file', 20);
+    sendProgress('Step 2: Downloading audio file', 40);
     
     let audioResponse;
     try {
@@ -5655,9 +6338,9 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       throw new Error(`下载英文音频失败 (${audioResponse.status}): ${audioResponse.statusText}`);
     }
     
-    const audioBuffer = Buffer.from(await audioResponse.arrayBuffer());
-    await fs.writeFile(tempAudioPath, audioBuffer);
-    console.log('✅ 英文音频下载完成，大小:', audioBuffer.length, 'bytes');
+    const downloadedAudioBuffer = Buffer.from(await audioResponse.arrayBuffer());
+    await fs.writeFile(tempAudioPath, downloadedAudioBuffer);
+    console.log('✅ 英文音频下载完成，大小:', downloadedAudioBuffer.length, 'bytes');
     
     // 获取音频时长
     const audioDuration = await new Promise((resolve, reject) => {
@@ -6030,15 +6713,26 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
             '-preset medium',
             '-crf 23',
             '-pix_fmt yuv420p',
+            '-profile:v baseline', // 使用baseline profile确保最大兼容性
+            '-level 3.0', // H.264 level 3.0，确保兼容性
             '-c:a aac',
             '-b:a 128k',
-            '-shortest'
+            '-shortest',
+            '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
           ]);
       } else {
+        // 即使没有字幕，也重新编码以确保faststart生效和兼容性
         ffmpegProcess = ffmpegProcess.outputOptions([
-          '-c:v copy',
+          '-c:v libx264',
+          '-preset fast',
+          '-crf 23',
+          '-pix_fmt yuv420p',
+          '-profile:v baseline', // 使用baseline profile确保最大兼容性
+          '-level 3.0', // H.264 level 3.0，确保兼容性
           '-c:a aac',
-          '-shortest'
+          '-b:a 128k',
+          '-shortest',
+          '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
         ]);
       }
       
@@ -6087,80 +6781,82 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
           console.error('❌ FFmpeg合并失败:', err);
           console.error('❌ FFmpeg错误详情:', err.message);
           console.error('❌ FFmpeg错误堆栈:', err.stack);
-          // 如果copy失败，尝试重新编码
-          if (err.message && err.message.includes('copy')) {
-            console.log('⚠️ 视频流复制失败，尝试重新编码...');
-            let fallbackProcess = ffmpeg()
-              .input(finalVideoPath)
-              .input(tempAudioPath);
-            
-            // 如果有字幕，添加字幕滤镜
-            if (tempSubtitlePath) {
-              fallbackProcess = fallbackProcess
-                .complexFilter([
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
-                  `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
-                ])
-                .outputOptions([
-                  '-map', '[outv]',
-                  '-map', '1:a',  // 映射音频流（第二个输入文件的音频）
-                  '-c:v libx264',
-                  '-preset ultrafast',
-                  '-crf 23',
-                  '-pix_fmt yuv420p',
-                  '-c:a aac',
-                  '-shortest'
-                ]);
-            } else {
-              fallbackProcess = fallbackProcess.outputOptions([
+          // 如果编码失败，尝试使用更快的预设
+          console.log('⚠️ 视频编码失败，尝试使用ultrafast预设...');
+          let fallbackProcess = ffmpeg()
+            .input(finalVideoPath)
+            .input(tempAudioPath);
+          
+          // 如果有字幕，添加字幕滤镜
+          if (tempSubtitlePath) {
+            fallbackProcess = fallbackProcess
+              .complexFilter([
+                `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
+                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
+              ])
+              .outputOptions([
+                '-map', '[outv]',
+                '-map', '1:a',  // 映射音频流（第二个输入文件的音频）
                 '-c:v libx264',
                 '-preset ultrafast',
                 '-crf 23',
                 '-pix_fmt yuv420p',
-                '-s 720x1280',
-                '-aspect 9:16',
+                '-profile:v baseline', // 使用baseline profile确保最大兼容性
+                '-level 3.0', // H.264 level 3.0，确保兼容性
                 '-c:a aac',
-                '-shortest'
+                '-b:a 128k',
+                '-shortest',
+                '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
               ]);
-            }
-            
-            fallbackProcess = fallbackProcess.output(tempOutputPath)
-              .on('end', () => {
-                console.log('✅ 视频合并完成（使用重新编码）');
-                resolve(null);
-              })
-              .on('error', (fallbackErr) => {
-                console.error('❌ 重新编码也失败:', fallbackErr);
-                reject(fallbackErr);
-              })
-              .run();
           } else {
-            reject(err);
+            fallbackProcess = fallbackProcess.outputOptions([
+              '-c:v libx264',
+              '-preset ultrafast',
+              '-crf 23',
+              '-pix_fmt yuv420p',
+              '-profile:v baseline', // 使用baseline profile确保最大兼容性
+              '-level 3.0', // H.264 level 3.0，确保兼容性
+              '-s 720x1280',
+              '-aspect 9:16',
+              '-c:a aac',
+              '-b:a 128k',
+              '-shortest',
+              '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
+            ]);
           }
+            
+          fallbackProcess = fallbackProcess.output(tempOutputPath)
+            .on('end', () => {
+              console.log('✅ 视频合并完成（使用重新编码）');
+              resolve(null);
+            })
+            .on('error', (fallbackErr) => {
+              console.error('❌ 重新编码也失败:', fallbackErr);
+              reject(fallbackErr);
+            })
+            .run();
         })
         .run();
     });
     
-    // 上传合并后的视频到LeanCloud
-    console.log('📤 开始上传英文视频到LeanCloud...');
+    // 上传合并后的视频到OSS
+    console.log('📤 开始上传英文视频到OSS...');
     sendProgress('Step 2: Uploading video', 90);
     const videoBuffer2 = await fs.readFile(tempOutputPath);
     const fileSizeMB = (videoBuffer2.length / 1024 / 1024).toFixed(2);
     console.log(`📊 视频文件大小: ${fileSizeMB}MB`);
     
-    const videoFile = new AV.File(`video_en_${contentId}_${timestamp}.mp4`, videoBuffer2, 'video/mp4');
-    
     // 设置上传超时时间（10分钟）
     const uploadStartTime = Date.now();
+    let finalVideoUrl;
     try {
-      await Promise.race([
-        videoFile.save(),
+      finalVideoUrl = await Promise.race([
+        uploadFile(videoBuffer2, `video_en_${contentId}_${timestamp}.mp4`, 'video/mp4', 'videos'),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('视频上传超时，请检查网络连接或文件大小')), 10 * 60 * 1000)
         )
       ]);
       const uploadTime = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
-    const finalVideoUrl = videoFile.url();
       console.log(`✅ 英文视频上传成功，耗时: ${uploadTime}秒，URL:`, finalVideoUrl);
       sendProgress('Step 2: Video upload completed', 95);
     } catch (error) {
@@ -6169,12 +6865,8 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       throw new Error(`视频上传失败: ${error.message}`);
     }
     
-    const finalVideoUrl = videoFile.url();
-    
     // 更新内容对象
-    contentObj.set('videoUrlEn', finalVideoUrl);
-    contentObj.set('videoStatus', 'completed');
-    await contentObj.save();
+    await db.update('ExtractedContent', { videoUrlEn: finalVideoUrl, videoStatus: 'completed' }, 'id = ?', [contentId]);
     
     // 清理临时文件（包括字幕文件）
     const cleanupFiles = [tempVideoPath, tempAudioPath, tempOutputPath, tempSubtitlePath].filter(Boolean);
@@ -6233,11 +6925,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     if (!res.headersSent) {
       // 更新状态为失败
       try {
-        const content = await new AV.Query('ExtractedContent').get(req.params.contentId);
-        if (content) {
-          content.set('videoStatus', 'failed');
-          await content.save();
-        }
+        await db.update('ExtractedContent', { videoStatus: 'failed' }, 'id = ?', [req.params.contentId]);
       } catch (updateError) {
         console.error('❌ 更新内容状态失败:', updateError);
       }
@@ -6276,29 +6964,28 @@ router.get('/:bookId/contents', async (req, res) => {
   try {
     const { bookId } = req.params;
 
-    const query = new AV.Query('ExtractedContent');
-    query.equalTo('book', AV.Object.createWithoutData('Book', bookId));
-    query.ascending('segmentIndex');
-    query.include('book');
-
-    const contents = await query.find();
+    const contents = await db.findAll(`
+      SELECT * FROM ExtractedContent 
+      WHERE bookId = ? 
+      ORDER BY segmentIndex ASC
+    `, [bookId]);
 
     const contentsData = contents.map(content => ({
       id: content.id,
-      chapterTitle: content.get('chapterTitle'),
-      chapterTitleEn: content.get('chapterTitleEn'),
-      summary: content.get('summary'),
-      summaryEn: content.get('summaryEn'),
-      avatarDescription: content.get('avatarDescription'),
-      estimatedDuration: content.get('estimatedDuration'),
-      videoStatus: content.get('videoStatus'),
-      videoUrl: content.get('videoUrl'),
-      videoUrlEn: content.get('videoUrlEn'),
-      audioUrl: content.get('audioUrl'),
-      audioUrlEn: content.get('audioUrlEn'),
-      silentVideoUrl: content.get('silentVideoUrl'),
-      avatarImageUrl: content.get('avatarImageUrl'),
-      segmentIndex: content.get('segmentIndex')
+      chapterTitle: content.chapterTitle,
+      chapterTitleEn: content.chapterTitleEn,
+      summary: content.summary,
+      summaryEn: content.summaryEn,
+      avatarDescription: content.avatarDescription,
+      estimatedDuration: content.estimatedDuration,
+      videoStatus: content.videoStatus,
+      videoUrl: content.videoUrl,
+      videoUrlEn: content.videoUrlEn,
+      audioUrl: content.audioUrl,
+      audioUrlEn: content.audioUrlEn,
+      silentVideoUrl: content.silentVideoUrl,
+      avatarImageUrl: content.avatarImageUrl,
+      segmentIndex: content.segmentIndex
     }));
 
     res.json({
@@ -6311,6 +6998,65 @@ router.get('/:bookId/contents', async (req, res) => {
       success: false,
       message: '获取提取内容失败',
       error: error.message
+    });
+  }
+});
+
+// 获取单个书籍详情
+router.get('/:bookId', async (req, res) => {
+  try {
+    const { bookId } = req.params;
+
+    if (!bookId) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少书籍ID'
+      });
+    }
+
+    const book = await db.findOne(`
+      SELECT b.*, 
+             c.id as category_id, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder
+      FROM Book b
+      LEFT JOIN Category c ON b.categoryId = c.id
+      WHERE b.id = ?
+    `, [bookId]);
+
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        message: '书籍不存在'
+      });
+    }
+
+    const bookData = {
+      id: book.id,
+      title: book.title,
+      author: book.author,
+      isbn: book.isbn,
+      category: book.category_id ? {
+        id: book.category_id,
+        name: book.category_name,
+        nameCn: book.category_nameCn,
+        sortOrder: book.category_sortOrder
+      } : undefined,
+      coverUrl: book.coverUrl,
+      blogCoverUrl: book.blogCoverUrl,
+      fileUrl: book.fileUrl,
+      uploadDate: book.uploadDate,
+      status: book.status,
+      createdAt: book.createdAt
+    };
+
+    res.json({
+      success: true,
+      data: bookData
+    });
+  } catch (error) {
+    console.error('获取书籍详情失败:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || '获取书籍详情失败'
     });
   }
 });
@@ -6328,36 +7074,32 @@ router.put('/:bookId', async (req, res) => {
       });
     }
 
-    // 使用Master Key更新书籍
-    AV.Cloud.useMasterKey();
-    const book = AV.Object.createWithoutData('Book', bookId);
+    // 更新书籍
+    const updateData = {};
+    if (title) updateData.title = title;
+    if (author) updateData.author = author;
+    if (categoryId) updateData.categoryId = categoryId;
     
-    if (title) {
-      book.set('title', title);
-    }
-    if (author) {
-      book.set('author', author);
-    }
-    if (categoryId) {
-      const category = AV.Object.createWithoutData('Category', categoryId);
-      book.set('category', category);
-    }
-
-    await book.save(null, { useMasterKey: true });
+    await db.update('Book', updateData, 'id = ?', [bookId]);
 
     // 重新获取更新后的书籍信息（包含关联的分类）
-    const updatedBook = await new AV.Query('Book').include('category').get(bookId);
+    const updatedBook = await db.findOne(`
+      SELECT b.*, c.id as category_id, c.nameCn as category_nameCn
+      FROM Book b
+      LEFT JOIN Category c ON b.categoryId = c.id
+      WHERE b.id = ?
+    `, [bookId]);
 
     res.json({
       success: true,
       message: '更新成功',
       data: {
         id: updatedBook.id,
-        title: updatedBook.get('title'),
-        author: updatedBook.get('author'),
-        category: updatedBook.get('category') ? {
-          id: updatedBook.get('category').id,
-          nameCn: updatedBook.get('category').get('nameCn')
+        title: updatedBook.title,
+        author: updatedBook.author,
+        category: updatedBook.category_id ? {
+          id: updatedBook.category_id,
+          nameCn: updatedBook.category_nameCn
         } : null
       }
     });
@@ -6382,10 +7124,15 @@ router.delete('/:bookId', async (req, res) => {
       });
     }
 
-    // 使用Master Key删除书籍
-    AV.Cloud.useMasterKey();
-    const book = AV.Object.createWithoutData('Book', bookId);
-    await book.destroy({ useMasterKey: true });
+    // 删除书籍
+    const book = await db.findOne('SELECT id FROM Book WHERE id = ?', [bookId]);
+    if (!book) {
+      return res.status(404).json({
+        success: false,
+        message: '书籍不存在'
+      });
+    }
+    await db.remove('Book', 'id = ?', [bookId]);
 
     res.json({
       success: true,
@@ -6401,4 +7148,5 @@ router.delete('/:bookId', async (req, res) => {
 });
 
 module.exports = router;
+
 
