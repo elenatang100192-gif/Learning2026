@@ -33,7 +33,7 @@ Learning/
 │   │   └── styles/
 │   └── package.json
 │
-└── admin API/            # Backend API Server
+└── adminapi/            # Backend API Server
     ├── routes/           # API Routes
     │   ├── books.js      # Book management & video generation
     │   ├── videos.js     # Video management
@@ -80,7 +80,7 @@ Learning/
 
 ## ⚙️ Backend Technology Stack
 
-### Core Backend (`admin API/`)
+### Core Backend (`adminapi/`)
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
@@ -301,7 +301,7 @@ Learning/
 - **Cons**: May be slow in China
 - **Steps**:
   1. Connect GitHub repository
-  2. Set root directory to `admin API`
+  2. Set root directory to `adminapi`
   3. Configure environment variables
   4. Auto-deploy
 
@@ -310,7 +310,7 @@ Learning/
 - **Steps**:
   1. Create CloudBase service
   2. Connect Git repository
-  3. Set target directory to `admin API`
+  3. Set target directory to `adminapi`
   4. Create Dockerfile (includes FFmpeg)
   5. Configure service port (3001)
   6. Set environment variables
@@ -370,7 +370,7 @@ CMD ["node", "server.js"]
 
 ## 📦 Environment Variables
 
-### Backend (`admin API/.env`)
+### Backend (`adminapi/.env`)
 
 ```bash
 # LeanCloud Configuration

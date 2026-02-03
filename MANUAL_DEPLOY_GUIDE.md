@@ -29,7 +29,7 @@
 1. 点击服务名称进入服务详情页
 2. 点击 **"版本管理"** 或 **"部署新版本"** 按钮
 3. 选择 **"本地上传"** 或 **"ZIP包上传"**
-4. 上传部署包：`admin API/backend-deploy-YYYYMMDD-HHMMSS.zip`
+4. 上传部署包：`adminapi/backend-deploy-YYYYMMDD-HHMMSS.zip`
 5. 等待上传完成（约1-2分钟）
 
 ---
@@ -140,7 +140,7 @@ https://video-app-backend-215072-7-1319956699.sh.run.tcloudbase.com/api/health
 如果CLI可以正常工作，可以使用：
 
 ```bash
-cd "/Users/et/Desktop/Learning/admin API"
+cd "/Users/et/Desktop/Learning/adminapi"
 tcb run deploy \
   -e video-app-env-8gpoewzu84d85ace \
   -s video-app-backend \

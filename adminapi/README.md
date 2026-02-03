@@ -1,4 +1,4 @@
-# admin API
+# adminapi
 
 基于Express.js的后端API服务，为frontend和admin提供数据接口。
 
@@ -19,7 +19,7 @@
 
 ### 安装依赖
 ```bash
-cd admin\ API
+cd adminapi
 npm install
 ```
 
@@ -181,7 +181,7 @@ curl "http://localhost:3001/api/videos?page=1&limit=10"
 ## 📁 项目结构
 
 ```
-admin API/
+adminapi/
 ├── routes/                 # API路由
 │   ├── auth.js            # 认证路由
 │   ├── videos.js          # 视频路由

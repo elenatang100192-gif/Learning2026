@@ -30,7 +30,7 @@
 ```
 frontend/          # 用户端Web应用 / User-facing Web App
 admin/            # 后台管理Web应用 / Admin Management Web App
-admin API/        # 后端API服务 / Backend API Service
+adminapi/        # 后端API服务 / Backend API Service
 ```
 
 ### 后端技术栈 / Backend Tech Stack
@@ -166,7 +166,7 @@ Book Input → AI Extract Highlights → AI Generate Script → TTS Generate Aud
 
 **部署步骤**:
 1. 连接GitHub仓库
-2. 设置Root Directory为 `admin API`
+2. 设置Root Directory为 `adminapi`
 3. 配置环境变量
 4. 自动部署
 
@@ -181,7 +181,7 @@ Book Input → AI Extract Highlights → AI Generate Script → TTS Generate Aud
 **部署步骤**:
 1. 创建云托管服务
 2. 配置Git仓库连接
-3. 设置目标目录为 `admin API`
+3. 设置目标目录为 `adminapi`
 4. 创建Dockerfile（包含FFmpeg安装）
 5. 配置服务端口（3001）
 6. 配置环境变量
@@ -357,7 +357,7 @@ Learning/
 │   │   └── styles/           # 样式文件
 │   ├── package.json
 │   └── vite.config.ts
-├── admin API/            # 后端API服务
+├── adminapi/            # 后端API服务
 │   ├── routes/           # API路由
 │   ├── utils/           # 工具函数
 │   ├── server.js        # 服务器入口

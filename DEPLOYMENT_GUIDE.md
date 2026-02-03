@@ -34,7 +34,7 @@
 Learning/
 ├── frontend/          # 前端应用
 ├── admin/            # 后台管理界面
-└── admin API/        # 后端 API
+└── adminapi/        # 后端 API
 ```
 
 **初始化仓库**:
@@ -753,11 +753,11 @@ Netlify 支持通过 Netlify Functions 部署 Node.js 后端，但你的后端�
 2. 使用 GitHub 登录
 3. 点击 "New Project" → "Deploy from GitHub repo"
 4. 选择包含所有代码的仓库（与前端和后台管理使用同一个仓库）
-5. 在项目设置中，设置 **Root Directory** 为 `admin API`
+5. 在项目设置中，设置 **Root Directory** 为 `adminapi`
 6. 配置环境变量（见下方）
 7. Railway 会自动检测 Node.js 项目并部署
 
-**重要**: 由于使用单一仓库，Railway 需要知道后端代码在哪个子目录，所以必须设置 Root Directory 为 `admin API`。
+**重要**: 由于使用单一仓库，Railway 需要知道后端代码在哪个子目录，所以必须设置 Root Directory 为 `adminapi`。
 
 **⚠️ 注意**: Railway 是国外服务，在中国大陆访问可能较慢或不稳定。
 
@@ -790,7 +790,7 @@ Netlify 支持通过 Netlify Functions 部署 Node.js 后端，但你的后端�
 4. **配置代码仓库**
    - 选择 "代码仓库部署"
    - 连接 GitHub/GitLab 仓库
-   - **代码目录**: `admin API`
+   - **代码目录**: `adminapi`
    - **构建命令**: `npm install`
    - **启动命令**: `node server.js`
 
@@ -867,15 +867,15 @@ Netlify 支持通过 Netlify Functions 部署 Node.js 后端，但你的后端�
 
 **步骤 6: 配置构建设置**
 1. 展开 "构建设置" 部分
-2. **目标目录**: 输入 `admin API`
+2. **目标目录**: 输入 `adminapi`
    - 这是代码仓库中后端代码所在的目录
    - CloudBase 会在这个目录下查找 Dockerfile
 3. **Dockerfile 文件**: 选择 "有"
 4. **Dockerfile 名称**: 输入 `Dockerfile`
-   - 确保 `admin API` 目录下有 `Dockerfile` 文件（见下方创建 Dockerfile）
+   - 确保 `adminapi` 目录下有 `Dockerfile` 文件（见下方创建 Dockerfile）
 
 **步骤 7: 创建 Dockerfile**
-在 `admin API` 目录下创建 `Dockerfile` 文件（如果还没有）：
+在 `adminapi` 目录下创建 `Dockerfile` 文件（如果还没有）：
 
 ```dockerfile
 # 使用 Node.js 18 官方镜像作为基础镜像
@@ -1015,7 +1015,7 @@ ADMIN_URL=https://your-admin-app.netlify.app
 2. 点击 "提交" 或 "创建服务"
 3. CloudBase 会自动：
    - 从 GitHub 拉取代码
-   - 在 `admin API` 目录下构建 Docker 镜像
+   - 在 `adminapi` 目录下构建 Docker 镜像
    - 安装依赖并启动服务
 4. 等待部署完成（通常需要 3-5 分钟）
 

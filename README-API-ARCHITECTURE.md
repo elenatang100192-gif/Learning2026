@@ -64,7 +64,7 @@ Learning/
 │   │       └── services/       # 共享API服务
 │   └── package.json
 │
-├── admin API/                 # 后端API服务
+├── adminapi/                 # 后端API服务
 │   ├── routes/                 # API路由
 │   ├── server.js              # Express服务器
 │   └── package.json

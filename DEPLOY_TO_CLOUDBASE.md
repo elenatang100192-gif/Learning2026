@@ -15,7 +15,7 @@
 
 ```bash
 # 1. 进入后端目录
-cd "/Users/et/Desktop/Learning/admin API"
+cd "/Users/et/Desktop/Learning/adminapi"
 
 # 2. 安装依赖（如果需要）
 npm install --production
@@ -28,7 +28,7 @@ zip -r backend-deploy.zip . \
   -x ".env" \
   -x "debug-fetch.js"
 
-# 部署包位置：/Users/et/Desktop/Learning/admin API/backend-deploy.zip
+# 部署包位置：/Users/et/Desktop/Learning/adminapi/backend-deploy.zip
 ```
 
 ### 步骤2：上传到腾讯云
@@ -81,7 +81,7 @@ tcb env:list
 
 ```bash
 # 进入后端目录
-cd "/Users/et/Desktop/Learning/admin API"
+cd "/Users/et/Desktop/Learning/adminapi"
 
 # 设置环境ID
 export TCB_ENVID="video-app-backend-215072-7-1319956699"
@@ -112,7 +112,7 @@ tcb run deploy \
    - 仓库地址：`https://github.com/elenatang100192-gif/Learning.git`
    - Token：使用您的GitHub Personal Access Token（从deploy-info文件获取）
    - 分支：`main`
-   - 代码路径：`/admin API`
+   - 代码路径：`/adminapi`
 
 3. **配置构建**
    - 安装命令：`npm install`

@@ -30,7 +30,7 @@ echo "🌐 环境ID: $ENV_ID"
 echo ""
 
 # 进入后端目录
-cd "admin API"
+cd "adminapi"
 
 echo "📦 准备部署文件..."
 echo ""

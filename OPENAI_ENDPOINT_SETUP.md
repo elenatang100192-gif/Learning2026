@@ -27,7 +27,7 @@ Error: OpenAI 端点未配置，请设置 OPENAI_ENDPOINT 和 OPENAI_DEPLOYMENT_
 3. 复制端点 URL（格式类似：`https://your-resource.openai.azure.com`）
 
 #### 步骤 4: 更新 .env 文件
-编辑 `admin API/.env` 文件，将 `OPENAI_ENDPOINT` 替换为您的实际端点：
+编辑 `adminapi/.env` 文件，将 `OPENAI_ENDPOINT` 替换为您的实际端点：
 
 ```bash
 OPENAI_ENDPOINT=https://your-actual-resource.openai.azure.com
@@ -43,7 +43,7 @@ OPENAI_ENDPOINT=https://your-actual-resource.openai.azure.com
 
 ## 📝 当前配置
 
-当前 `admin API/.env` 文件中的配置：
+当前 `adminapi/.env` 文件中的配置：
 
 ```bash
 OPENAI_API_KEY=cfbf57ca067949419e00faba7441f21f

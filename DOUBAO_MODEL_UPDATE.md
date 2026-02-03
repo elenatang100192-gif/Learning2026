@@ -60,7 +60,7 @@ DOUBAO_IMAGE_MODEL_ID=doubao-seedream-4-0-最新版本号
 
 ### 方法2: 直接修改代码
 
-修改 `admin API/routes/books.js` 文件：
+修改 `adminapi/routes/books.js` 文件：
 
 ```javascript
 // 第55行：视频生成模型

@@ -109,7 +109,7 @@ Azure 资源 `agr-dev-openai` 中没有名为 `gpt-image-1.5` 的部署。您需
 找到或创建部署后，更新 `.env` 文件：
 
 ```bash
-# 编辑 admin API/.env 文件
+# 编辑 adminapi/.env 文件
 OPENAI_DEPLOYMENT_NAME=实际的部署名称
 ```
 
@@ -130,7 +130,7 @@ OPENAI_DEPLOYMENT_NAME=gpt-image-1.5-preview
 配置更改后，重启服务器：
 
 ```bash
-cd "admin API"
+cd "adminapi"
 # 停止当前服务器（Ctrl+C）
 npm run dev
 ```

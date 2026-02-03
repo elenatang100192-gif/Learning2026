@@ -17,7 +17,7 @@
 
 ### 3. 更新配置
 
-编辑 `admin API/.env` 文件，将 `OPENAI_DEPLOYMENT_NAME` 更新为实际部署名称：
+编辑 `adminapi/.env` 文件，将 `OPENAI_DEPLOYMENT_NAME` 更新为实际部署名称：
 
 ```bash
 OPENAI_DEPLOYMENT_NAME=实际的部署名称
@@ -34,7 +34,7 @@ OPENAI_DEPLOYMENT_NAME=实际的部署名称
 ### 5. 重启服务器
 
 ```bash
-cd "admin API"
+cd "adminapi"
 npm run dev
 ```
 

@@ -20,7 +20,7 @@ has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is pres
 ### 步骤1: 准备部署包
 
 部署包已准备好：
-- **文件位置**: `admin API/backend-deploy-YYYYMMDD-HHMMSS.zip`
+- **文件位置**: `adminapi/backend-deploy-YYYYMMDD-HHMMSS.zip`
 - **包含内容**: 最新的server.js（包含CORS配置）
 
 ### 步骤2: 登录腾讯云控制台
@@ -39,7 +39,7 @@ has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is pres
 1. 点击服务名称进入详情页
 2. 点击 **"版本管理"** → **"部署新版本"**
 3. 选择 **"本地上传"** 或 **"ZIP包上传"**
-4. 上传文件：`admin API/backend-deploy-YYYYMMDD-HHMMSS.zip`
+4. 上传文件：`adminapi/backend-deploy-YYYYMMDD-HHMMSS.zip`
 5. 等待上传完成
 
 ### 步骤5: 配置参数

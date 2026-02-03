@@ -223,7 +223,7 @@ API Key：866a3f1e-a011-4f07-a5a8-01cd771f8552
 │   │   └── styles/               # 样式文件
 │   ├── package.json
 │   └── vite.config.ts
-├── admin API/                     # 后端API服务
+├── adminapi/                     # 后端API服务
 │   ├── routes/                    # API路由
 │   ├── server.js                  # 服务器入口
 │   └── package.json

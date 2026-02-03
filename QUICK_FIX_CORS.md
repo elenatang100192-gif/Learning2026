@@ -55,7 +55,7 @@ tcb env:list
 
 ```bash
 # 1. 进入后端目录
-cd "/Users/et/Desktop/Learning/admin API"
+cd "/Users/et/Desktop/Learning/adminapi"
 
 # 2. 设置环境ID（替换为您的实际环境ID）
 export TCB_ENVID="video-app-backend-215072-7-1319956699"

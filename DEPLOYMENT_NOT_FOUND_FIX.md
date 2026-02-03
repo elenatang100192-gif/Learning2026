@@ -40,7 +40,7 @@ Error: OpenAI DALL-E API失败: 404 DeploymentNotFound
 
 ### 步骤 2: 更新部署名称
 
-如果找到了部署，编辑 `admin API/.env` 文件：
+如果找到了部署，编辑 `adminapi/.env` 文件：
 
 ```bash
 # 将部署名称更新为实际名称
@@ -82,7 +82,7 @@ OPENAI_DEPLOYMENT_NAME=DALL-E-3
 配置更改后，重启服务器：
 
 ```bash
-cd "admin API"
+cd "adminapi"
 # 停止当前服务器（Ctrl+C）
 npm run dev
 ```
@@ -104,7 +104,7 @@ npm run dev
 检查当前配置：
 
 ```bash
-cd "admin API"
+cd "adminapi"
 cat .env | grep OPENAI
 ```
 

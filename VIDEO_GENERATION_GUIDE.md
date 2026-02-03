@@ -6,8 +6,8 @@
 
 ## 文件位置
 
-- **话筒视频文件**: `admin API/routes/Videocreate.mov` ✅（已就位）
-- **备用位置**: `admin API/Videocreate.mov`
+- **话筒视频文件**: `adminapi/routes/Videocreate.mov` ✅（已就位）
+- **备用位置**: `adminapi/Videocreate.mov`
 
 ## 视频生成流程
 
@@ -228,7 +228,7 @@ ffmpeg \
 
 ## 注意事项
 
-1. **话筒视频文件**: 确保 `Videocreate.mov` 文件存在于 `admin API/routes/` 目录下
+1. **话筒视频文件**: 确保 `Videocreate.mov` 文件存在于 `adminapi/routes/` 目录下
 2. **博客封面图**: 必须先生成博客封面图，否则视频生成会失败
 3. **音频文件**: 必须先生成对应语言的音频文件
 4. **超时设置**: 视频生成可能需要较长时间（5-15分钟），请确保API超时时间足够长
@@ -303,7 +303,7 @@ echo "✅ 所有视频生成完成！"
 
 ## 相关文件
 
-- `admin API/routes/books.js` - 视频生成API实现
-- `admin API/routes/Videocreate.mov` - 话筒视频模板文件
+- `adminapi/routes/books.js` - 视频生成API实现
+- `adminapi/routes/Videocreate.mov` - 话筒视频模板文件
 - `admin/src/app/services/leancloud.ts` - 前端API调用封装
 

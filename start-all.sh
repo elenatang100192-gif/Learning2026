@@ -44,7 +44,7 @@ sleep 1
 
 # 1. 启动后端API
 echo -e "${GREEN}[1/3] 启动后端API服务器...${NC}"
-cd "$SCRIPT_DIR/admin API"
+cd "$SCRIPT_DIR/adminapi"
 if [ ! -d "node_modules" ]; then
     echo -e "${YELLOW}后端API: 正在安装依赖...${NC}"
     npm install

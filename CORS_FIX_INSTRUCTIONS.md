@@ -30,10 +30,10 @@ NODE_ENV=production
 
 ### 方法2：本地测试使用 .env 文件
 
-创建 `admin API/.env` 文件（已提供 `.env.production` 模板）：
+创建 `adminapi/.env` 文件（已提供 `.env.production` 模板）：
 
 ```bash
-cd "admin API"
+cd "adminapi"
 cp .env.production .env
 ```
 
@@ -93,7 +93,7 @@ tcb fn deploy
 ### 方法B：直接上传代码
 1. 打包后端代码
 ```bash
-cd "admin API"
+cd "adminapi"
 zip -r backend.zip . -x "node_modules/*" -x ".git/*" -x "*.log"
 ```
 

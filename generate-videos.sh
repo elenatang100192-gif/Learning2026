@@ -31,7 +31,7 @@ echo "🌐 API地址: $API_BASE"
 echo ""
 
 # 检查话筒视频文件
-MIC_VIDEO_PATH="admin API/routes/Videocreate.mov"
+MIC_VIDEO_PATH="adminapi/routes/Videocreate.mov"
 if [ ! -f "$MIC_VIDEO_PATH" ]; then
     echo -e "${RED}❌ 错误: 话筒视频文件不存在: $MIC_VIDEO_PATH${NC}"
     echo "请确保 Videocreate.mov 文件在正确位置"
