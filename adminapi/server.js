@@ -156,12 +156,38 @@ app.use((req, res, next) => {
 });
 
 // 速率限制
+// Rate limiting配置（开发环境放宽限制）
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // limit each IP to 1000 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: process.env.NODE_ENV === 'production' ? 1000 : 10000, // 生产环境1000，开发环境10000
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // 跳过某些请求（如健康检查）
+  skip: (req) => {
+    // 开发环境跳过rate limit
+    if (process.env.NODE_ENV !== 'production') {
+      return false; // 开发环境仍然应用rate limit，但限制更宽松
+    }
+    return false;
+  }
 });
+
+// 为登录端点设置更宽松的限制（避免登录时被限制）
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: process.env.NODE_ENV === 'production' ? 20 : 100, // 生产环境15分钟内20次，开发环境100次
+  message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true // 只计算失败的登录请求
+});
+
+// 应用rate limit到所有API端点
 app.use('/api/', limiter);
+
+// 为登录端点应用更宽松的限制
+app.use('/api/auth/login', loginLimiter);
 
 // 显式处理OPTIONS预检请求（确保CORS正常工作）
 app.options('*', (req, res) => {
@@ -203,6 +229,7 @@ const favoriteRoutes = require('./routes/favorites');
 const bookRoutes = require('./routes/books');
 const commentRoutes = require('./routes/comments');
 const followRoutes = require('./routes/follows');
+const notificationRoutes = require('./routes/notifications');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
@@ -214,6 +241,7 @@ app.use('/api/favorites', favoriteRoutes);
 app.use('/api/books', bookRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/follows', followRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // 根路径处理
 app.get('/', (req, res) => {
@@ -232,7 +260,8 @@ app.get('/', (req, res) => {
       likes: '/api/likes',
       favorites: '/api/favorites',
       comments: '/api/comments',
-      follows: '/api/follows'
+      follows: '/api/follows',
+      notifications: '/api/notifications'
     },
     documentation: 'See /api/health for server status'
   });

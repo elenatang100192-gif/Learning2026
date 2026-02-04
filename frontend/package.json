@@ -5,9 +5,26 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "build:mobile": "CAPACITOR=true vite build && ./fix-asset-paths.sh",
+    "dev": "vite",
+    "cap:sync": "npm run build:mobile && npx cap sync",
+    "cap:ios": "npm run cap:sync && npx cap open ios",
+    "cap:android": "npm run cap:sync && npx cap open android",
+    "cap:ios:build": "npm run cap:sync && cd ios && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive -archivePath ./build/App.xcarchive",
+    "cap:android:build": "npm run cap:sync && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
+    "@capacitor-community/http": "^1.4.1",
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/haptics": "^8.0.0",
+    "@capacitor/http": "^0.0.2",
+    "@capacitor/ios": "^8.0.2",
+    "@capacitor/keyboard": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",

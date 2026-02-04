@@ -110,14 +110,14 @@ async function sendOTPEmail(email, otp) {
 
     // 邮件内容
     const mailOptions = {
-      from: `"VidBrain AI" <${process.env.EMAIL_USER || process.env.SMTP_USER}>`,
+      from: `"NexusMind Ai" <${process.env.EMAIL_USER || process.env.SMTP_USER}>`,
       to: email,
       subject: 'Your Login Verification Code',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #ff6b35;">VidBrain AI Short Video Platform</h2>
+          <h2 style="color: #ff6b35;">NexusMind Ai Short Video Platform</h2>
           <p>Hello,</p>
-          <p>You are logging in to VidBrain AI Short Video Platform. Please use the following verification code to complete your login:</p>
+          <p>You are logging in to NexusMind Ai Short Video Platform. Please use the following verification code to complete your login:</p>
           <div style="background-color: #f5f5f5; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px;">
             <h1 style="color: #ff6b35; font-size: 32px; margin: 0; letter-spacing: 5px;">${otp}</h1>
           </div>
@@ -150,12 +150,12 @@ async function testEmailService(email) {
     }
 
     const mailOptions = {
-      from: `"VidBrain AI" <${process.env.EMAIL_USER || process.env.SMTP_USER}>`,
+      from: `"NexusMind Ai" <${process.env.EMAIL_USER || process.env.SMTP_USER}>`,
       to: email,
       subject: '邮件服务测试',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <h2 style="color: #ff6b35;">VidBrain AI Short Video Platform</h2>
+          <h2 style="color: #ff6b35;">NexusMind Ai Short Video Platform</h2>
           <p>这是一封测试邮件，如果您收到此邮件，说明邮件服务配置成功！</p>
           <p style="color: #666; font-size: 14px;">时间：${new Date().toLocaleString('zh-CN')}</p>
         </div>

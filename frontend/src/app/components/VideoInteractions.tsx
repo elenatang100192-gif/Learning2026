@@ -9,6 +9,7 @@ interface Video {
   title: string;
   titleEn?: string;
   author: string;
+  authorId?: string; // 视频作者ID
   avatar: string;
   thumbnail: string;
   videoUrl: string;
@@ -23,9 +24,10 @@ interface Video {
 
 interface VideoInteractionsProps {
   video: Video;
+  onVideoUpdate?: (videoId: string, updates: Partial<Video>) => void; // 更新视频数据的回调
 }
 
-export function VideoInteractions({ video }: VideoInteractionsProps) {
+export function VideoInteractions({ video, onVideoUpdate }: VideoInteractionsProps) {
   const { language } = useLanguage();
   const [isLiked, setIsLiked] = useState(video.isLiked);
   const [isSaved, setIsSaved] = useState(video.isSaved);
@@ -33,6 +35,15 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
   const [commentCount, setCommentCount] = useState(video.comments);
   const [showComments, setShowComments] = useState(false);
   const [canComment, setCanComment] = useState(true); // 默认允许评论
+
+  // 当视频切换时，更新互动数据（确保每个视频显示自己的真实数据）
+  useEffect(() => {
+    setIsLiked(video.isLiked);
+    setIsSaved(video.isSaved);
+    setLikes(video.likes);
+    setCommentCount(video.comments);
+    console.log(`🔄 视频切换，更新互动数据: ID=${video.id}, likes=${video.likes}, comments=${video.comments}, isLiked=${video.isLiked}, isSaved=${video.isSaved}`);
+  }, [video.id, video.likes, video.comments, video.isLiked, video.isSaved]);
 
   // 获取用户评论权限
   useEffect(() => {
@@ -57,6 +68,10 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
       const result = await likeAPI.toggleLike(video.id);
       setIsLiked(result.liked);
       setLikes(result.likeCount);
+      // 通知父组件更新视频数据
+      if (onVideoUpdate) {
+        onVideoUpdate(video.id, { likes: result.likeCount, isLiked: result.liked });
+      }
 
       if (result.liked) {
         toast.success(language === 'zh' ? '已点赞' : 'Liked');
@@ -73,6 +88,10 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
     try {
       const favorited = await favoriteAPI.toggleFavorite(video.id);
       setIsSaved(favorited);
+      // 通知父组件更新视频数据
+      if (onVideoUpdate) {
+        onVideoUpdate(video.id, { isSaved: favorited });
+      }
 
       if (favorited) {
         toast.success('已收藏');
@@ -89,13 +108,15 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
   };
 
   const formatCount = (count: number): string => {
-    if (count >= 10000) {
-      return (count / 10000).toFixed(1) + 'w';
+    // 确保 count 是有效的数字
+    const num = Math.max(0, Number(count) || 0);
+    if (num >= 10000) {
+      return (num / 10000).toFixed(1) + 'w';
     }
-    if (count >= 1000) {
-      return (count / 1000).toFixed(1) + 'k';
+    if (num >= 1000) {
+      return (num / 1000).toFixed(1) + 'k';
     }
-    return count.toString();
+    return num.toString();
   };
 
   return (
@@ -180,7 +201,6 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
           </div>
           <span className="text-white text-xs font-semibold drop-shadow-lg">{language === 'zh' ? '收藏' : 'Save'}</span>
         </button>
-
       </div>
 
       {/* 评论抽屉 */}
@@ -189,11 +209,15 @@ export function VideoInteractions({ video }: VideoInteractionsProps) {
         onClose={() => setShowComments(false)}
         video={video}
         onCommentAdded={async () => {
-          // 评论添加后，重新获取评论数量
+          // 评论添加后，重新获取评论数量并更新
           try {
             const { commentAPI } = await import('../services/leancloud');
             const count = await commentAPI.getCommentCount(video.id);
             setCommentCount(count);
+            // 通知父组件更新视频数据
+            if (onVideoUpdate) {
+              onVideoUpdate(video.id, { comments: count });
+            }
           } catch (error) {
             console.error('获取评论数量失败:', error);
           }

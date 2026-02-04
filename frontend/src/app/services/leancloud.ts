@@ -1,9 +1,44 @@
+// 导入 Capacitor HTTP（绕过 WebView CORS 限制）
+import { CapacitorHttp } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
+
+// 检测是否在原生环境中
+const isNative = Capacitor.isNativePlatform();
+
 // 后端API配置（支持环境变量）
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+// 原生环境（iOS/Android）始终使用远程地址，本地开发环境可以使用本地地址
+const getApiBaseUrl = () => {
+  // 如果是原生环境，强制使用远程地址
+  if (isNative) {
+    return 'https://nexusmind-api-test.ashgso.com/api/';
+  }
+  // 本地开发环境：优先使用环境变量，否则使用本地地址
+  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api/';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// 调试：输出 API_BASE_URL 配置
+console.log('🔧 API_BASE_URL 配置:', API_BASE_URL);
+console.log('🔧 是否原生环境:', isNative);
+console.log('🔧 import.meta.env.VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL);
 
 // API请求辅助函数
 const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
-  const url = `${API_BASE_URL}${endpoint}`;
+  // 确保 API_BASE_URL 不为空
+  const baseUrl = API_BASE_URL || 'https://nexusmind-api-test.ashgso.com/api/';
+  // 处理 URL 拼接：如果 baseUrl 以 / 结尾，endpoint 以 / 开头，则移除一个斜杠
+  const normalizedBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${normalizedBaseUrl}${normalizedEndpoint}`;
+  
+  // 调试：输出完整的 URL
+  console.log('🔧 API Request URL 构建:', {
+    baseUrl,
+    endpoint,
+    fullUrl: url
+  });
+  
   const config: RequestInit = {
     headers: {
       'Content-Type': 'application/json',
@@ -21,17 +56,101 @@ const apiRequest = async (endpoint: string, options: RequestInit = {}) => {
     };
   }
 
-  const response = await fetch(url, config);
+  try {
+    console.log(`🌐 API Request: ${url}`, { method: config.method || 'GET', headers: config.headers, isNative });
+    
+    // 在原生环境中使用 Capacitor HTTP（绕过 WebView CORS 限制）
+    if (isNative) {
+      try {
+        const response = await CapacitorHttp.request({
+          method: (config.method as any) || 'GET',
+          url: url,
+          headers: config.headers as any,
+          data: config.body ? (typeof config.body === 'string' ? JSON.parse(config.body) : config.body) : undefined,
+        });
+        
+        console.log(`📥 API Response (Native): ${url}`, { 
+          status: response.status, 
+          data: response.data
+        });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const error = new Error(errorData.message || `HTTP error! status: ${response.status}`);
-    // 添加status属性以便后续检查
-    (error as any).status = response.status;
+        if (response.status >= 400) {
+          const errorData = typeof response.data === 'object' ? response.data : {};
+          const errorMessage = errorData.message || `HTTP error! status: ${response.status}`;
+          console.error(`❌ API Error (Native): ${url}`, { status: response.status, message: errorMessage, data: errorData });
+          const error = new Error(errorMessage);
+          (error as any).status = response.status;
+          throw error;
+        }
+
+        console.log(`✅ API Success (Native): ${url}`, response.data);
+        return response.data;
+      } catch (nativeError: any) {
+        console.warn('Native HTTP request failed, falling back to fetch:', nativeError);
+        // 如果原生请求失败，回退到标准 fetch
+      }
+    }
+    
+    // Web 环境或原生请求失败时，使用标准 fetch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+    
+    const fetchConfig: RequestInit = {
+      ...config,
+      signal: controller.signal,
+      mode: 'cors', // CORS 模式
+      credentials: 'omit', // 不发送 cookies
+      cache: 'no-cache', // 禁用缓存
+      redirect: 'follow', // 跟随重定向
+    };
+    
+    const response = await fetch(url, fetchConfig);
+    clearTimeout(timeoutId);
+    
+    console.log(`📥 API Response: ${url}`, { 
+      status: response.status, 
+      ok: response.ok,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries())
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.message || `HTTP error! status: ${response.status}`;
+      console.error(`❌ API Error: ${url}`, { status: response.status, message: errorMessage, data: errorData });
+      const error = new Error(errorMessage);
+      // 添加status属性以便后续检查
+      (error as any).status = response.status;
+      throw error;
+    }
+
+    const data = await response.json();
+    console.log(`✅ API Success: ${url}`, data);
+    return data;
+  } catch (error: any) {
+    // 处理网络错误（如连接失败、超时等）
+    if (error.name === 'AbortError') {
+      console.error(`⏱️ Request Timeout: ${url}`, error);
+      const timeoutError = new Error('Request timeout: The server did not respond in time.');
+      (timeoutError as any).status = 0;
+      (timeoutError as any).isNetworkError = true;
+      throw timeoutError;
+    }
+    if (error.name === 'TypeError' && (error.message.includes('fetch') || error.message.includes('Load failed') || error.message.includes('Failed to fetch'))) {
+      console.error(`🌐 Network Error: ${url}`, error);
+      console.error(`🌐 Error details:`, {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      const networkError = new Error('Network error: Unable to connect to server. Please check your internet connection and server status.');
+      (networkError as any).status = 0;
+      (networkError as any).isNetworkError = true;
+      throw networkError;
+    }
+    // 重新抛出其他错误
     throw error;
   }
-
-  return response.json();
 };
 
 // 数据类型定义
@@ -159,20 +278,34 @@ export const authAPI = {
   // 密码登录
   loginWithPassword: async (email: string, password: string): Promise<User | null> => {
     try {
+      console.log('🔐 Password login request:', { email, passwordLength: password.length, loginType: 'password' });
+      
       const response = await apiRequest('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password, loginType: 'password' })
       });
 
+      console.log('🔍 Password login API raw response:', response);
+
       if (response.success && response.user) {
         // 存储session token到localStorage
         localStorage.setItem('sessionToken', response.sessionToken);
+        console.log('✅ Password login successful, user:', response.user);
         return response.user;
       }
+      
+      console.error('❌ Password login failed: response.success is false or user is missing', response);
       return null;
-    } catch (error) {
-      console.error('密码登录失败:', error);
-      return null;
+    } catch (error: any) {
+      console.error('❌ Password login exception:', error);
+      console.error('❌ Error details:', {
+        message: error?.message,
+        status: error?.status,
+        stack: error?.stack,
+      });
+      
+      // 重新抛出错误，让调用者可以处理
+      throw error;
     }
   },
 
@@ -407,7 +540,16 @@ export const commentAPI = {
   getCommentCount: async (videoId: string): Promise<number> => {
     try {
       const response = await apiRequest(`/comments/${videoId}/count`);
-      return response.success ? (response.count || 0) : 0;
+      // 确保返回的是数字类型，处理可能的字符串、null、undefined
+      let count = 0;
+      if (response && response.success && response.count !== undefined && response.count !== null) {
+        count = parseInt(String(response.count), 10);
+        if (isNaN(count)) {
+          count = 0;
+        }
+      }
+      console.log(`📊 视频 ${videoId} 的评论数: ${count} (API返回: ${response.count})`);
+      return count;
     } catch (error) {
       console.error('获取评论数量失败:', error);
       return 0;
@@ -429,17 +571,141 @@ export const commentAPI = {
     }
   },
 
-  // 添加评论
-  addComment: async (videoId: string, content: string): Promise<Comment | null> => {
+  // 添加评论（支持回复和@用户名）
+  addComment: async (
+    videoId: string, 
+    content: string, 
+    parentCommentId?: string, 
+    mentionedUserIds?: string[]
+  ): Promise<Comment | null> => {
     try {
+      const requestBody: any = {
+        content,
+        parentCommentId: parentCommentId || null
+      };
+      
+      // 只有当mentionedUserIds存在且不为空时才添加到请求体
+      if (mentionedUserIds && mentionedUserIds.length > 0) {
+        requestBody.mentionedUserIds = mentionedUserIds;
+        console.log('📤 发送@用户ID列表:', mentionedUserIds);
+      } else {
+        console.log('ℹ️ 没有@用户，不发送mentionedUserIds');
+      }
+      
       const response = await apiRequest(`/comments/${videoId}`, {
         method: 'POST',
-        body: JSON.stringify({ content })
+        body: JSON.stringify(requestBody)
       });
       return response.success ? response.data : null;
     } catch (error) {
       console.error('添加评论失败:', error);
       throw error;
+    }
+  },
+
+  // 删除评论
+  deleteComment: async (commentId: string): Promise<boolean> => {
+    try {
+      const response = await apiRequest(`/comments/comment/${commentId}`, {
+        method: 'DELETE'
+      });
+      return response.success;
+    } catch (error) {
+      console.error('删除评论失败:', error);
+      throw error;
+    }
+  },
+
+  // 检查用户是否已评论
+  hasCommented: async (videoId: string): Promise<{ commented: boolean; commentId: string | null }> => {
+    try {
+      const response = await apiRequest(`/comments/${videoId}/status`);
+      return response.success ? { 
+        commented: response.commented || false, 
+        commentId: response.commentId || null 
+      } : { commented: false, commentId: null };
+    } catch (error: any) {
+      // 401错误表示用户未登录，静默返回false
+      if (error?.status === 401 || error?.message?.includes('401') || error?.message?.includes('Unauthorized')) {
+        return { commented: false, commentId: null };
+      }
+      console.error('检查评论状态失败:', error);
+      return { commented: false, commentId: null };
+    }
+  }
+};
+
+// 通知相关API
+export const notificationAPI = {
+  // 获取通知列表
+  getNotifications: async (page: number = 1, limit: number = 20, unreadOnly: boolean = false): Promise<{
+    data: any[];
+    unreadCount: number;
+    pagination: { page: number; limit: number };
+  }> => {
+    try {
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
+      if (unreadOnly) {
+        params.append('unreadOnly', 'true');
+      }
+      
+      const response = await apiRequest(`/notifications?${params.toString()}`);
+      return response.success ? response : { data: [], unreadCount: 0, pagination: { page, limit } };
+    } catch (error) {
+      console.error('获取通知列表失败:', error);
+      return { data: [], unreadCount: 0, pagination: { page, limit } };
+    }
+  },
+
+  // 获取未读通知数量
+  getUnreadCount: async (): Promise<number> => {
+    try {
+      const response = await apiRequest('/notifications/unread-count');
+      return response.success ? (response.count || 0) : 0;
+    } catch (error) {
+      console.error('获取未读通知数量失败:', error);
+      return 0;
+    }
+  },
+
+  // 标记通知为已读
+  markAsRead: async (notificationId: string): Promise<boolean> => {
+    try {
+      const response = await apiRequest(`/notifications/${notificationId}/read`, {
+        method: 'PATCH'
+      });
+      return response.success;
+    } catch (error) {
+      console.error('标记通知为已读失败:', error);
+      return false;
+    }
+  },
+
+  // 标记所有通知为已读
+  markAllAsRead: async (): Promise<boolean> => {
+    try {
+      const response = await apiRequest('/notifications/read-all', {
+        method: 'PATCH'
+      });
+      return response.success;
+    } catch (error) {
+      console.error('标记所有通知为已读失败:', error);
+      return false;
+    }
+  },
+
+  // 删除通知
+  deleteNotification: async (notificationId: string): Promise<boolean> => {
+    try {
+      const response = await apiRequest(`/notifications/${notificationId}`, {
+        method: 'DELETE'
+      });
+      return response.success;
+    } catch (error) {
+      console.error('删除通知失败:', error);
+      return false;
     }
   }
 };
@@ -491,6 +757,23 @@ export const userAPI = {
       console.error('获取观看历史失败:', error);
       return [];
     }
+  },
+
+  // 搜索用户（用于@功能）
+  searchUsers: async (query: string = '', limit: number = 20): Promise<User[]> => {
+    try {
+      const params = new URLSearchParams();
+      if (query) {
+        params.append('q', query);
+      }
+      params.append('limit', limit.toString());
+
+      const response = await apiRequest(`/users/search?${params.toString()}`);
+      return response.success ? response.data : [];
+    } catch (error) {
+      console.error('搜索用户失败:', error);
+      return [];
+    }
   }
 };
 
@@ -508,7 +791,9 @@ export const uploadAPI = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/upload/video`, {
+    // 规范化 URL：移除 baseUrl 末尾的斜杠，确保 endpoint 以斜杠开头
+    const normalizedBaseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+    const response = await fetch(`${normalizedBaseUrl}/upload/video`, {
       method: 'POST',
       headers,
       body: formData
@@ -535,7 +820,9 @@ export const uploadAPI = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}/upload/cover`, {
+    // 规范化 URL：移除 baseUrl 末尾的斜杠，确保 endpoint 以斜杠开头
+    const normalizedBaseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+    const response = await fetch(`${normalizedBaseUrl}/upload/cover`, {
       method: 'POST',
       headers,
       body: formData

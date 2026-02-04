@@ -61,3 +61,93 @@ SENSITIVE_INFO.md
 *.pid.lock
 
 PRODUCTION_ENV_COMPLETE.md
+
+# iOS证书和配置文件（敏感信息）
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+*.keychain
+**/*.p12
+**/*.mobileprovision
+**/*.cer
+frontend/证书.p12
+frontend/nexusmind_2026.mobileprovision
+
+# iOS构建产物
+*.ipa
+*.xcarchive
+*.dSYM
+ios/App/build/
+ios/App/App/build/
+**/build/ipa/
+**/build/*.xcarchive
+
+# Android构建产物
+*.apk
+*.aab
+android/app/build/
+android/.gradle/
+
+# 备份目录
+.backup-configs/
+*.backup
+
+# 临时文档（fix相关）
+*FIX*.md
+*FIX*.txt
+*DIAGNOSE*.md
+*QUICK*.md
+*CHECK*.md
+*CONFIGURATION*.md
+*SETUP*.md
+*GUIDE*.md
+*STEPS*.md
+*STATUS*.md
+*HANDOFF*.md
+*REPORT*.md
+*INSTRUCTIONS*.md
+*PACKAGE*.md
+*UPLOAD*.md
+*BUILD*.md
+*INSTALL*.md
+*VIEW*.md
+*HOW*.md
+*ENTERPRISE*.md
+*PRODUCTION*.md
+*MOBILE*.md
+*XCODE*.md
+*ANDROID*.md
+*APP*.md
+*IOS*.md
+*STEP*.md
+*COMPLETE*.md
+*DEPLOYMENT*.md
+*CORS*.md
+*QUICK*.md
+*DIAGNOSE*.md
+*CHECK*.md
+*CONFIGURATION*.md
+*REPORT*.md
+*HANDOFF*.md
+*INSTRUCTIONS*.md
+*PACKAGE*.md
+*UPLOAD*.md
+*BUILD*.md
+*INSTALL*.md
+*VIEW*.md
+*HOW*.md
+*ENTERPRISE*.md
+*PRODUCTION*.md
+*MOBILE*.md
+*XCODE*.md
+*ANDROID*.md
+*APP*.md
+*IOS*.md
+*STEP*.md
+*COMPLETE*.md
+*DEPLOYMENT*.md
+*CORS*.md
+
+# 临时脚本（可选，如果需要保留可以注释掉）
+# *.sh

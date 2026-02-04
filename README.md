@@ -132,10 +132,10 @@
 
 ### 后端技术栈
 
-- **BaaS平台**: LeanCloud（国内服务，MongoDB数据库）
-- **文件存储**: 阿里云OSS（视频文件和封面图存储）
-- **云函数**: LeanCloud Cloud Engine（AI集成和业务逻辑处理）
-- **认证服务**: LeanCloud Auth（OTP邮箱验证码登录）
+- **数据库**: MySQL（远程数据库服务器）
+- **文件存储**: 七牛云（Qiniu Cloud，视频文件和封面图存储）
+- **后端服务**: Node.js + Express（自定义API服务）
+- **认证服务**: 自定义 OTP 邮箱验证码登录（基于 MySQL 数据库）
 
 ### 移动端适配
 

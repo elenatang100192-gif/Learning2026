@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { VideoCard } from './VideoCard';
 import { VideoInteractions } from './VideoInteractions';
+import { NotificationBell } from './NotificationBell';
 import { videoAPI, categoryAPI, likeAPI, favoriteAPI, commentAPI, followAPI, type Video as LeanCloudVideo } from '../services/leancloud';
 import { useLanguage } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -39,6 +40,7 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
   const [loading, setLoading] = useState(true);
   const [currentProgress, setCurrentProgress] = useState(0); // 当前视频的进度
   const [isFollowing, setIsFollowing] = useState(false); // 当前视频的关注状态
+  const [hasUserInteracted, setHasUserInteracted] = useState(false); // 跟踪用户是否已交互
 
   // 当 currentIndex 变化时，更新关注状态和进度
   useEffect(() => {
@@ -86,8 +88,8 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     }
 
     // 默认头像：Ashley HR Center avatar
-    // 使用 import.meta.env.BASE_URL 来适配开发和生产环境
-    const defaultAvatar = `${import.meta.env.BASE_URL}ashley-avatar.jpg`;
+    // 使用绝对路径确保在移动端正确加载
+    const defaultAvatar = '/ashley-avatar.jpg';
 
     return {
       id: leanCloudVideo.id,
@@ -100,8 +102,9 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
       videoUrl: leanCloudVideo.videoUrl, // 中文视频URL
       videoUrlEn: leanCloudVideo.videoUrlEn || null, // 英文视频URL
       category: categoryMap[leanCloudVideo.category.nameCn] || 'Tech',
-      likes: leanCloudVideo.likeCount,
-      comments: await commentAPI.getCommentCount(leanCloudVideo.id),
+      likes: Math.max(0, parseInt(String(leanCloudVideo.likeCount || 0), 10) || 0), // 确保 likeCount 是数字类型
+      // 直接使用视频列表接口返回的 commentCount，避免重复API调用
+      comments: Math.max(0, parseInt(String(leanCloudVideo.commentCount || 0), 10) || 0), // 确保 commentCount 是数字类型
       shares: 0,   // TODO: 添加分享功能
       isLiked,
       isSaved: isFavorited,
@@ -110,9 +113,10 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     };
   };
 
-  // 获取视频数据
+  // 获取视频数据（优化：避免切换分类时的黑屏）
   useEffect(() => {
     const loadVideos = async () => {
+      // 不立即设置 loading，保持旧视频显示
       setLoading(true);
       try {
         // 根据分类获取视频
@@ -245,13 +249,27 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
           return dateB - dateA;
         });
         
+        // 先设置视频列表，保持旧视频显示直到新视频准备好
         setVideos(finalVideos);
-        setCurrentIndex(0); // 重置到第一个视频
+        setLoading(false); // 立即设置 loading 为 false，让新视频显示
+        
+        // 延迟重置索引和滚动，确保新视频已渲染
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setCurrentIndex(0);
+            // 确保滚动到顶部（使用 instant 避免滚动动画导致的黑屏）
+            if (containerRef.current) {
+              containerRef.current.scrollTo({
+                top: 0,
+                behavior: 'instant', // 使用 instant 避免滚动过程中的黑屏
+              });
+            }
+          });
+        });
       } catch (error) {
         console.error('加载视频失败:', error);
         toast.error('加载视频失败');
-        setVideos([]);
-      } finally {
+        // 不清空视频列表，保持显示旧视频
         setLoading(false);
       }
     };
@@ -259,54 +277,112 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     loadVideos();
   }, [category, language]); // 添加language依赖，切换语言时重新加载并过滤视频
 
-  // 监听滚动事件，更新当前视频索引
+  // 监听滚动事件，更新当前视频索引（优化：使用 Intersection Observer 精确检测）
   useEffect(() => {
     const container = containerRef.current;
     if (!container || videos.length === 0) return;
 
-    let scrollTimeout: NodeJS.Timeout;
+    // 使用 Intersection Observer 精确检测哪个视频在视口中
+    const videoContainers = container.querySelectorAll('.h-screen');
+    const observers: IntersectionObserver[] = [];
     
+    videoContainers.forEach((videoContainer, index) => {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            // 如果视频容器在视口中且可见度超过 50%
+            if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+              const newIndex = index;
+              console.log(`📹 检测到视频索引变化: ${newIndex}, 视频标题: ${videos[newIndex]?.title || '未知'}`);
+              
+              // 标记用户已交互（滚动）
+              if (!hasUserInteracted) {
+                setHasUserInteracted(true);
+              }
+              
+              // 如果索引变化，立即更新
+              if (newIndex !== currentIndex && newIndex >= 0 && newIndex < videos.length) {
+                setCurrentIndex(newIndex);
+                
+                // 强制暂停所有非激活的视频
+                const allVideos = container.querySelectorAll('video');
+                allVideos.forEach((video) => {
+                  const videoElement = video as HTMLVideoElement;
+                  const videoContainerElement = video.closest('.h-screen');
+                  const videoIndex = Array.from(videoContainers).indexOf(videoContainerElement as Element);
+                  
+                  // 只有当前索引的视频可以播放，其他都暂停
+                  if (videoIndex !== newIndex) {
+                    if (!videoElement.paused) {
+                      videoElement.pause();
+                    }
+                  }
+                });
+              }
+            }
+          });
+        },
+        {
+          threshold: [0.5], // 当视频容器 50% 以上可见时触发
+          rootMargin: '0px',
+        }
+      );
+      
+      observer.observe(videoContainer);
+      observers.push(observer);
+    });
+    
+    // 备用方案：使用滚动事件（如果 Intersection Observer 不可用）
+    let scrollTimeout: NodeJS.Timeout;
     const handleScroll = () => {
+      // 标记用户已交互（滚动）
+      if (!hasUserInteracted) {
+        setHasUserInteracted(true);
+      }
+      
       // 清除之前的定时器
       clearTimeout(scrollTimeout);
       
-      // 延迟更新索引，等待滚动停止（CSS snap会自动对齐）
+      // 延迟计算，等待滚动稳定
       scrollTimeout = setTimeout(() => {
         const scrollTop = container.scrollTop;
         const windowHeight = window.innerHeight;
-        const newIndex = Math.round(scrollTop / windowHeight);
+        
+        // 更精确的计算：找到最接近视口中心的视频
+        let closestIndex = 0;
+        let minDistance = Infinity;
+        
+        videoContainers.forEach((videoContainer, index) => {
+          const rect = videoContainer.getBoundingClientRect();
+          const containerTop = rect.top + container.scrollTop;
+          const centerY = scrollTop + windowHeight / 2;
+          const distance = Math.abs(containerTop + windowHeight / 2 - centerY);
 
-        if (newIndex !== currentIndex && newIndex >= 0 && newIndex < videos.length) {
-          // 暂停所有视频元素（确保切换时没有残留播放）
-          const allVideos = container.querySelectorAll('video');
-          allVideos.forEach((video) => {
-            if (video.paused === false) {
-              video.pause();
-            }
-          });
-          
-          setCurrentIndex(newIndex);
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestIndex = index;
+          }
+        });
+        
+        if (closestIndex !== currentIndex && closestIndex >= 0 && closestIndex < videos.length) {
+          console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
+          setCurrentIndex(closestIndex);
     }
       }, 100);
   };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
+    
     return () => {
+      // 清理所有 observers
+      observers.forEach(observer => observer.disconnect());
       container.removeEventListener('scroll', handleScroll);
       clearTimeout(scrollTimeout);
     };
-  }, [currentIndex, videos.length]);
+  }, [currentIndex, videos.length, hasUserInteracted, videos]);
 
-  // 切换分类时重置索引和滚动位置
-  useEffect(() => {
-    setCurrentIndex(0);
-    if (containerRef.current) {
-      containerRef.current.scrollTo({
-        top: 0,
-        behavior: 'instant',
-      });
-    }
-  }, [category]);
+  // 切换分类时重置索引和滚动位置（优化：避免黑屏）
+  // 注意：这个逻辑已经在 loadVideos 中处理，这里移除避免重复执行
 
   // 获取当前视频
   const currentVideo = videos.length > 0 && currentIndex >= 0 && currentIndex < videos.length 
@@ -337,14 +413,17 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     <>
     <div
       ref={containerRef}
-      className="flex-1 overflow-y-scroll snap-y snap-mandatory scroll-smooth [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+      className="flex-1 overflow-y-scroll snap-y snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+      style={{
+        scrollBehavior: 'smooth',
+        WebkitOverflowScrolling: 'touch', // iOS 平滑滚动
+      }}
     >
       {videos.map((video, index) => (
         <div
           key={video.id}
             className="h-screen w-full snap-start snap-always flex-shrink-0 relative"
             style={{
-              minHeight: '100vh',
               minHeight: '-webkit-fill-available', // iOS Safari 支持
             }}
         >
@@ -353,6 +432,7 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
             isActive={index === currentIndex}
             showFollowButton={showFollowButton}
               onProgressUpdate={index === currentIndex ? setCurrentProgress : undefined}
+            hasUserInteracted={hasUserInteracted}
           />
         </div>
       ))}
@@ -361,9 +441,25 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
       {/* Fixed 定位的覆盖层元素 - 根据当前视频更新 */}
       {currentVideo && (
         <>
+          {/* 右上角通知铃铛 */}
+          <div className="fixed top-4 right-4 z-30 max-w-[480px]" style={{ right: 'calc((100vw - min(100vw, 480px)) / 2 + 16px)' }}>
+            <NotificationBell />
+          </div>
+
           {/* 右侧交互按钮 */}
           <div className="fixed right-4 bottom-52 z-20 max-w-[480px]" style={{ right: 'calc((100vw - min(100vw, 480px)) / 2 + 16px)' }}>
-            <VideoInteractions video={currentVideo} />
+            <VideoInteractions 
+              video={currentVideo} 
+              onVideoUpdate={(videoId, updates) => {
+                // 更新 videos 数组中对应视频的数据
+                setVideos(prevVideos => 
+                  prevVideos.map(v => 
+                    v.id === videoId ? { ...v, ...updates } : v
+                  )
+                );
+                console.log(`🔄 更新视频数据: ID=${videoId}`, updates);
+              }}
+            />
           </div>
 
           {/* 进度条 */}
@@ -404,7 +500,7 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       if (!target.src.includes('ashley-avatar.jpg')) {
-                        target.src = `${import.meta.env.BASE_URL}ashley-avatar.jpg`;
+                        target.src = '/ashley-avatar.jpg';
                       }
                     }}
                   />

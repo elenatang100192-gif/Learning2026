@@ -57,6 +57,86 @@ const authenticateUser = async (req, res, next) => {
   }
 };
 
+// 搜索用户（用于@功能，需要登录但不需要管理员权限）
+// 注意：必须在 router.get('/') 之前定义，否则会被 '/' 路由匹配
+router.get('/search', authenticateUser, [
+  query('q').optional().isString(),
+  query('limit').optional().isInt({ min: 1, max: 50 })
+], async (req, res) => {
+  try {
+    console.log('🔍 /users/search 请求:', {
+      query: req.query,
+      user: req.user ? { id: req.user.id, username: req.user.username } : 'no user'
+    });
+
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      console.error('❌ 验证错误:', errors.array());
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid query parameters',
+        errors: errors.array()
+      });
+    }
+
+    const { q = '', limit = 20 } = req.query;
+    const searchQuery = q.trim();
+
+    // 构建SQL查询 - 搜索用户名
+    // 注意：User表可能没有avatar字段，如果不存在会返回NULL
+    let sql = 'SELECT id, username, email, createdAt FROM User WHERE 1=1';
+    const params = [];
+
+    // 如果有搜索条件，添加搜索过滤
+    if (searchQuery) {
+      sql += ` AND username LIKE ?`;
+      params.push(`%${searchQuery}%`);
+    }
+
+    // 排除当前用户自己
+    if (req.user && req.user.id) {
+      sql += ` AND id != ?`;
+      params.push(req.user.id);
+    }
+
+    // 排序和限制
+    sql += ` ORDER BY username ASC LIMIT ?`;
+    params.push(parseInt(limit));
+
+    console.log('📝 SQL查询:', sql);
+    console.log('📝 参数:', params);
+
+    const users = await db.query(sql, params);
+    console.log('✅ 查询成功，找到', users.length, '个用户');
+
+    const userData = users.map(user => ({
+      id: user.id.toString(),
+      username: user.username,
+      email: user.email,
+      avatar: user.avatar || null,
+      joinDate: user.createdAt ? new Date(user.createdAt).toISOString().split('T')[0] : null,
+      totalVideos: 0,
+      totalViews: 0,
+      canPublish: false,
+      canComment: false
+    }));
+
+    console.log('✅ 返回用户数据:', userData.length, '个用户');
+    res.json({
+      success: true,
+      data: userData
+    });
+  } catch (error) {
+    console.error('❌ Search users error:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search users',
+      error: process.env.NODE_ENV !== 'production' ? error.message : undefined
+    });
+  }
+});
+
 // 获取用户列表（管理员功能）
 router.get('/', [
   query('page').optional().isInt({ min: 1 }),

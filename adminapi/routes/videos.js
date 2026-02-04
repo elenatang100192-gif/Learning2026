@@ -94,6 +94,35 @@ router.get('/', async (req, res) => {
 
     const videos = await db.query(sql, params);
 
+    // 批量获取每个视频的实际点赞数和评论数（优化性能）
+    const videoIds = videos.map(v => v.id);
+    let likeCountsMap = {};
+    let commentCountsMap = {};
+    
+    if (videoIds.length > 0) {
+      try {
+        // 获取所有视频的实际点赞数
+        const likePlaceholders = videoIds.map(() => '?').join(',');
+        const likeSql = 'SELECT videoId, COUNT(*) as count FROM `Like` WHERE videoId IN (' + likePlaceholders + ') GROUP BY videoId';
+        const likeCounts = await db.query(likeSql, videoIds);
+        likeCounts.forEach(item => {
+          likeCountsMap[item.videoId] = parseInt(item.count || 0, 10) || 0;
+        });
+        
+        // 获取所有视频的实际评论数
+        const commentPlaceholders = videoIds.map(() => '?').join(',');
+        const commentSql = 'SELECT videoId, COUNT(*) as count FROM Comment WHERE videoId IN (' + commentPlaceholders + ') GROUP BY videoId';
+        const commentCounts = await db.query(commentSql, videoIds);
+        commentCounts.forEach(item => {
+          commentCountsMap[item.videoId] = parseInt(item.count || 0, 10) || 0;
+        });
+      } catch (error) {
+        console.error('❌ 获取点赞数和评论数时出错:', error);
+        console.error('错误堆栈:', error.stack);
+        // 如果查询失败，使用数据库字段的默认值
+      }
+    }
+
     // 转换数据格式
     const videoData = videos.map(video => {
       // 如果没有作者（后台发布的视频），创建默认作者信息
@@ -137,8 +166,11 @@ router.get('/', async (req, res) => {
         fileSize: video.fileSize || 0,
         status: video.status,
         disabled: video.disabled || false,
-        viewCount: Math.max(0, video.viewCount || 0),
-        likeCount: Math.max(0, video.likeCount || 0),
+        viewCount: Math.max(0, parseInt(video.viewCount || 0, 10) || 0),
+        // 使用实时计算的点赞数和评论数，确保数据准确
+        // 优先使用实际统计的数据，如果没有则使用数据库字段
+        likeCount: Math.max(0, likeCountsMap[video.id] !== undefined ? likeCountsMap[video.id] : (parseInt(video.likeCount || 0, 10) || 0)),
+        commentCount: Math.max(0, commentCountsMap[video.id] !== undefined ? commentCountsMap[video.id] : 0),
         uploadDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : null,
         publishDate: video.publishDate || null,
         displayOrder: video.displayOrder || undefined,
@@ -173,6 +205,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // 获取视频基本信息
     const video = await db.findOne(`
       SELECT v.*, 
              c.id as category_id, c.name as category_name, c.nameCn as category_nameCn,
@@ -182,6 +215,21 @@ router.get('/:id', async (req, res) => {
       LEFT JOIN User u ON v.authorId = u.id
       WHERE v.id = ?
     `, [id]);
+    
+    // 实时计算点赞数和评论数
+    const likeCountResult = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM \`Like\` 
+      WHERE videoId = ?
+    `, [id]);
+    const actualLikeCount = parseInt(likeCountResult[0]?.count || 0, 10) || 0;
+    
+    const commentCountResult = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM Comment 
+      WHERE videoId = ?
+    `, [id]);
+    const actualCommentCount = parseInt(commentCountResult[0]?.count || 0, 10) || 0;
 
     if (!video) {
       return res.status(404).json({
@@ -206,8 +254,10 @@ router.get('/:id', async (req, res) => {
       fileSize: video.fileSize || 0,
       status: video.status,
       disabled: video.disabled || false,
-      viewCount: video.viewCount || 0,
-      likeCount: video.likeCount || 0,
+      viewCount: Math.max(0, parseInt(video.viewCount || 0, 10) || 0),
+      // 使用实时计算的点赞数和评论数，确保数据准确
+      likeCount: Math.max(0, actualLikeCount),
+      commentCount: Math.max(0, actualCommentCount),
       uploadDate: video.createdAt ? new Date(video.createdAt).toISOString().split('T')[0] : null,
       publishDate: video.publishDate || null,
       author: video.author_id ? {
