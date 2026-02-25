@@ -49,8 +49,8 @@ router.get('/', async (req, res) => {
 
     // 过滤条件
     if (category) {
-      // 按nameCn（中文名称）查询分类
-      const categories = await db.findAll('SELECT id FROM Category WHERE nameCn = ?', [category]);
+      // 按name（英文名称）或nameCn（中文名称）查询分类
+      const categories = await db.findAll('SELECT id FROM Category WHERE name = ? OR nameCn = ?', [category, category]);
       if (categories && categories.length > 0) {
         const categoryIds = categories.map(c => c.id);
         sql += ` AND v.categoryId IN (${categoryIds.map(() => '?').join(',')})`;

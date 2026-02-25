@@ -203,15 +203,25 @@ router.post('/admin/cover', upload.single('cover'), async (req, res) => {
     const { originalname, buffer, mimetype } = req.file;
     const { bookId } = req.body; // Optional: bookId to save cover image URL to Book object
     
+    console.log('📤 上传封面图片，bookId:', bookId, 'filename:', originalname);
+    
     const coverImageUrl = await uploadFile(buffer, originalname, mimetype, 'covers');
     
     // If bookId is provided, save the cover image URL to the Book object
     if (bookId) {
       try {
-        const book = await db.findOne('SELECT id FROM Book WHERE id = ?', [bookId]);
+        const book = await db.findOne('SELECT id, title FROM Book WHERE id = ?', [bookId]);
         if (book) {
+          console.log('💾 保存封面URL到书籍，bookId:', bookId, 'title:', book.title);
           await db.update('Book', { blogCoverUrl: coverImageUrl }, 'id = ?', [bookId]);
-          console.log(`✅ Cover image URL saved to Book object: bookId=${bookId}, url=${coverImageUrl}`);
+          
+          // 验证保存结果
+          const updatedBook = await db.findOne('SELECT id, title, blogCoverUrl FROM Book WHERE id = ?', [bookId]);
+          if (updatedBook && updatedBook.blogCoverUrl === coverImageUrl) {
+            console.log(`✅ Cover image URL saved to Book object successfully: bookId=${bookId}, title=${updatedBook.title}, url=${coverImageUrl}`);
+          } else {
+            console.error('❌ 保存失败或验证失败:', { updatedBook });
+          }
         } else {
           console.warn(`⚠️ Book not found: bookId=${bookId}`);
         }
@@ -219,6 +229,8 @@ router.post('/admin/cover', upload.single('cover'), async (req, res) => {
         console.error('❌ Failed to save cover image URL to Book object:', bookError);
         // Don't fail the upload if saving to Book fails
       }
+    } else {
+      console.log('ℹ️ 未提供bookId，封面图片已上传但未关联到书籍');
     }
 
     res.json({

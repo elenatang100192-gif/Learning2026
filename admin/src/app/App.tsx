@@ -5,15 +5,16 @@ import { Dashboard } from './components/Dashboard';
 import { BookManagement } from './components/BookManagement';
 import { VideoManagement } from './components/VideoManagement';
 import { UserManagement } from './components/UserManagement';
+import { PromptManagement } from './components/PromptManagement';
 import { AdminLogin } from './components/AdminLogin';
-import { LayoutDashboard, BookOpen, Video, Users, LogOut } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Video, Users, LogOut, FileText } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Avatar, AvatarFallback } from './components/ui/avatar';
 import { useLanguage } from './contexts/LanguageContext';
 import { apiRequest } from './services/leancloud';
 import { toast } from 'sonner';
 
-type Page = 'dashboard' | 'books' | 'videos' | 'users';
+type Page = 'dashboard' | 'books' | 'videos' | 'users' | 'prompts';
 
 function App() {
   const { t } = useLanguage();
@@ -71,6 +72,7 @@ function App() {
     { id: 'dashboard' as const, labelKey: 'dashboard', icon: LayoutDashboard },
     { id: 'books' as const, labelKey: 'books', icon: BookOpen },
     { id: 'videos' as const, labelKey: 'videos', icon: Video },
+    { id: 'prompts' as const, labelKey: 'prompts', icon: FileText },
     { id: 'users' as const, labelKey: 'users', icon: Users }
   ];
 
@@ -82,6 +84,8 @@ function App() {
         return <BookManagement />;
       case 'videos':
         return <VideoManagement />;
+      case 'prompts':
+        return <PromptManagement />;
       case 'users':
         return <UserManagement />;
       default:

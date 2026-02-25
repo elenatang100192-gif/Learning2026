@@ -20,6 +20,8 @@ export function BookManagement() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -93,7 +95,56 @@ export function BookManagement() {
   // 加载数据
   useEffect(() => {
     loadData();
-  }, [currentPage, searchTerm]);
+  }, [currentPage, activeSearchTerm, categoryFilter]);
+
+  // 处理搜索
+  const handleSearch = () => {
+    setActiveSearchTerm(searchTerm);
+    setCurrentPage(1); // 搜索时重置到第一页
+  };
+
+  // 处理回车键搜索
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
+
+  // 当切换书籍时，重置封面生成相关的状态
+  useEffect(() => {
+    if (selectedBook) {
+      console.log('📚 切换书籍:', { id: selectedBook.id, title: selectedBook.title, blogCoverUrl: selectedBook.blogCoverUrl });
+      
+      // 重置封面生成状态
+      setGeneratingBlogCover(false);
+      setGeneratingPrompts(false);
+      setBlogCoverPrompts(null);
+      setSelectedPromptStyle(null);
+      setEditedPrompts(null);
+      setIsPromptDialogOpen(false);
+      
+      // 清除之前书籍的上传封面图片
+      setUploadedCoverImage(null);
+      
+      // 使用当前书籍的blogCoverUrl（从数据库获取的最新数据）
+      // 确保从books列表中获取最新的数据
+      const latestBook = books.find(b => b.id === selectedBook.id);
+      if (latestBook && latestBook.blogCoverUrl) {
+        console.log('📚 使用书籍列表中的blogCoverUrl:', latestBook.blogCoverUrl);
+        setBlogCoverUrl(latestBook.blogCoverUrl);
+      } else if (selectedBook.blogCoverUrl) {
+        console.log('📚 使用selectedBook中的blogCoverUrl:', selectedBook.blogCoverUrl);
+        setBlogCoverUrl(selectedBook.blogCoverUrl);
+      } else {
+        console.log('📚 当前书籍没有封面');
+        setBlogCoverUrl(null);
+      }
+    } else {
+      // 如果没有选中书籍，清空所有状态
+      setBlogCoverUrl(null);
+      setUploadedCoverImage(null);
+    }
+  }, [selectedBook?.id, books]);
 
   // 清理进度条定时器
   useEffect(() => {
@@ -108,13 +159,23 @@ export function BookManagement() {
     try {
       setLoading(true);
 
+      // 构建筛选条件
+      const filters: any = {};
+      if (activeSearchTerm) {
+        filters.title = activeSearchTerm;
+        filters.author = activeSearchTerm;
+      }
+      if (categoryFilter && categoryFilter !== 'all') {
+        // 找到对应的category对象，传递其name（英文名称）
+        const selectedCategory = categories.find(cat => cat.id === categoryFilter);
+        if (selectedCategory) {
+          filters.category = selectedCategory.name || selectedCategory.nameCn;
+        }
+      }
+
       // 并行加载书籍和分类数据
       const [booksData, categoriesData] = await Promise.all([
-        bookAPI.getList(
-          searchTerm ? { title: searchTerm, author: searchTerm } : {},
-          currentPage,
-          20
-        ),
+        bookAPI.getList(filters, currentPage, 20),
         categoryAPI.getAll()
       ]);
 
@@ -917,12 +978,8 @@ export function BookManagement() {
     }
   };
 
-  // 本地搜索（API已经支持服务端搜索，这里作为额外过滤）
-  const filteredBooks = books.filter(book =>
-    !searchTerm ||
-    book.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    book.author.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // 不再需要本地过滤，因为API已经支持服务端搜索
+  const filteredBooks = books;
 
   const getStatusBadge = (status: Book['status']) => {
     const statusMap: Record<Book['status'], string> = {
@@ -1187,15 +1244,41 @@ export function BookManagement() {
       </Dialog>
 
       <Card className="p-6">
-        <div className="flex gap-4 mb-6">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by book title or author..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
+        <div className="flex gap-4 mb-6 items-center">
+          <div className="flex-1 relative flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by book title or author..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="pl-10"
+              />
+            </div>
+            <Button onClick={handleSearch} variant="default" size="default">
+              <Search className="mr-2 h-4 w-4" />
+              Search
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="category-filter" className="whitespace-nowrap">Category:</Label>
+            <Select value={categoryFilter} onValueChange={(value) => {
+              setCategoryFilter(value);
+              setCurrentPage(1); // 筛选时重置到第一页
+            }}>
+              <SelectTrigger id="category-filter" className="w-[180px]">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id}>
+                    {category.name || category.nameCn}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -1235,7 +1318,7 @@ export function BookManagement() {
             ) : filteredBooks.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
-                  {searchTerm ? 'No matching books found' : 'No book data available'}
+                  {activeSearchTerm ? 'No matching books found' : 'No book data available'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -1442,10 +1525,20 @@ export function BookManagement() {
                       
                       try {
                         setIsUploadingCover(true);
+                        
+                        // 验证selectedBook是否正确
+                        if (!selectedBook || !selectedBook.id) {
+                          toast.error('No book selected');
+                          setIsUploadingCover(false);
+                          return;
+                        }
+                        
+                        console.log('📤 上传封面，书籍ID:', selectedBook.id, '书名:', selectedBook.title);
+                        
                         // Upload cover image and save to Book object if book is selected
                         const result = await videoAPI.uploadCover(
                           file, 
-                          selectedBook?.id, // Pass bookId to save to Book object
+                          selectedBook.id, // Pass bookId to save to Book object
                           (progress) => {
                             // Can display upload progress
                           }
@@ -1499,9 +1592,16 @@ export function BookManagement() {
               <div className="mt-3">
                 <img 
                   src={uploadedCoverImage || blogCoverUrl || selectedBook?.blogCoverUrl || ''} 
-                  alt="Blog Cover" 
+                  alt={`Blog Cover for ${selectedBook?.title || 'Book'}`}
                   className="w-full max-w-xs mx-auto rounded-lg border"
+                  onError={(e) => {
+                    console.error('封面图片加载失败:', e);
+                    console.error('图片URL:', uploadedCoverImage || blogCoverUrl || selectedBook?.blogCoverUrl);
+                  }}
                 />
+                <p className="text-xs text-muted-foreground mt-2 text-center">
+                  当前书籍: {selectedBook?.title} (ID: {selectedBook?.id})
+                </p>
               </div>
             )}
           </div>
@@ -1680,6 +1780,13 @@ export function BookManagement() {
                           try {
                             setIsPromptDialogOpen(false);
                             setGeneratingBlogCover(true);
+                            
+                            // 验证selectedBook是否正确
+                            if (!selectedBook || !selectedBook.id) {
+                              throw new Error('No book selected');
+                            }
+                            
+                            console.log('📚 生成封面，书籍ID:', selectedBook.id, '书名:', selectedBook.title);
                             
                             const result = await bookAPI.generateBlogCover(
                               selectedBook.id,

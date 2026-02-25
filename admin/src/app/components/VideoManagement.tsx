@@ -20,6 +20,8 @@ export function VideoManagement() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
@@ -54,7 +56,20 @@ export function VideoManagement() {
   // 加载数据
   useEffect(() => {
     loadData();
-  }, [currentPage, searchTerm, activeTab]);
+  }, [currentPage, activeSearchTerm, activeTab, categoryFilter]);
+
+  // 处理搜索
+  const handleSearch = () => {
+    setActiveSearchTerm(searchTerm);
+    setCurrentPage(1); // 搜索时重置到第一页
+  };
+
+  // 处理回车键搜索
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
+    }
+  };
 
   // 当视频列表加载后，预加载视频播放URL
   useEffect(() => {
@@ -117,8 +132,17 @@ export function VideoManagement() {
 
       // 根据当前tab构建查询条件
       const filters: any = {};
-      if (searchTerm) {
-        filters.title = searchTerm;
+      if (activeSearchTerm) {
+        filters.title = activeSearchTerm;
+      }
+
+      // 根据category筛选
+      if (categoryFilter && categoryFilter !== 'all') {
+        // 找到对应的category对象，传递其name（英文名称）
+        const selectedCategory = categories.find(cat => cat.id === categoryFilter);
+        if (selectedCategory) {
+          filters.category = selectedCategory.name || selectedCategory.nameCn;
+        }
       }
 
       // 根据tab设置status过滤
@@ -553,10 +577,10 @@ export function VideoManagement() {
       filtered = filtered.filter(v => v.status === tab && !v.disabled);
     }
 
-    if (searchTerm) {
+    if (activeSearchTerm) {
       filtered = filtered.filter(v =>
-        v.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (v.book && v.book.title.toLowerCase().includes(searchTerm.toLowerCase()))
+        v.title.toLowerCase().includes(activeSearchTerm.toLowerCase()) ||
+        (v.book && v.book.title.toLowerCase().includes(activeSearchTerm.toLowerCase()))
       );
     }
     
@@ -1321,14 +1345,40 @@ export function VideoManagement() {
         </Dialog>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search video title or book name..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
-        />
+      <div className="flex gap-2 items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search video title or book name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="pl-10"
+          />
+        </div>
+        <Button onClick={handleSearch} variant="default" size="default">
+          <Search className="mr-2 h-4 w-4" />
+          Search
+        </Button>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="category-filter" className="whitespace-nowrap">Category:</Label>
+          <Select value={categoryFilter} onValueChange={(value) => {
+            setCategoryFilter(value);
+            setCurrentPage(1); // 筛选时重置到第一页
+          }}>
+            <SelectTrigger id="category-filter" className="w-[180px]">
+              <SelectValue placeholder="All Categories" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categories.map((category) => (
+                <SelectItem key={category.id} value={category.id}>
+                  {category.name || category.nameCn}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} defaultValue="all" className="w-full">

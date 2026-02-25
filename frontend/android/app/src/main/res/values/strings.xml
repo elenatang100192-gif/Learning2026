@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NexusMind Short Video</string>
+    <string name="title_activity_main">NexusMind Short Video</string>
+    <string name="package_name">com.ashleyfurniture.nexusmind</string>
+    <string name="custom_url_scheme">com.ashleyfurniture.nexusmind</string>
+</resources>

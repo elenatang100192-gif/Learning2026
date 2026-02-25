@@ -144,8 +144,10 @@ const QINIU_ACCESS_KEY = requireEnv('QINIU_ACCESS_KEY');
 const QINIU_SECRET_KEY = requireEnv('QINIU_SECRET_KEY');
 
 // 初始化七牛云配置
+// 注意：根据fileUpload.js的配置，bucket trainspace在z2区域（华南区域）
+// 但这里主要用于uploadToOSS函数，实际封面生成使用fileUpload.js中的uploadFile函数
 const qiniuConfig = new qiniu.conf.Config();
-qiniuConfig.zone = qiniu.zone.Zone_z0; // 华东区域
+qiniuConfig.zone = qiniu.zone.Zone_z2; // 华南区域（与fileUpload.js保持一致）
 const mac = new qiniu.auth.digest.Mac(QINIU_ACCESS_KEY, QINIU_SECRET_KEY);
 
 console.log('✅ 七牛云存储客户端已初始化，Bucket:', QINIU_BUCKET, 'URL:', QINIU_URL);
@@ -873,14 +875,19 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
     const { bookId } = req.params;
     const { customPrompt } = req.body; // 支持自定义提示词
     
+    console.log('📚 生成博客封面，bookId:', bookId);
+    
     // 获取书籍信息
     const book = await db.findOne('SELECT * FROM Book WHERE id = ?', [bookId]);
     if (!book) {
+      console.error('❌ 书籍不存在，bookId:', bookId);
       return res.status(404).json({
         success: false,
         message: '书籍不存在'
       });
     }
+    
+    console.log('📚 书籍信息:', { id: book.id, title: book.title, author: book.author });
     
     const title = book.title;
     const author = book.author;
@@ -1038,19 +1045,42 @@ router.post('/:bookId/generate-blog-cover', async (req, res) => {
     }
     
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-    const finalImageUrl = await uploadFile(imageBuffer, `blog_cover_${bookId}_${Date.now()}.jpg`, 'image/jpeg', 'covers');
-    console.log('✅ Image uploaded to Qiniu successfully, URL:', finalImageUrl);
+    console.log('📦 Image buffer size:', imageBuffer.length, 'bytes');
     
-    // 保存到书籍对象
-    await db.update('Book', { blogCoverUrl: finalImageUrl }, 'id = ?', [bookId]);
-    
-    res.json({
-      success: true,
-      data: {
-        blogCoverUrl: finalImageUrl,
-        imageUrl: finalImageUrl
+    try {
+      const finalImageUrl = await uploadFile(imageBuffer, `blog_cover_${bookId}_${Date.now()}.jpg`, 'image/jpeg', 'covers');
+      console.log('✅ Image uploaded to Qiniu successfully, URL:', finalImageUrl);
+      
+      // 验证URL格式
+      if (!finalImageUrl || !finalImageUrl.startsWith('http')) {
+        throw new Error(`Invalid image URL returned: ${finalImageUrl}`);
       }
-    });
+      
+      // 保存到书籍对象
+      console.log('💾 保存封面URL到数据库，bookId:', bookId, 'title:', book.title);
+      await db.update('Book', { blogCoverUrl: finalImageUrl }, 'id = ?', [bookId]);
+      
+      // 验证保存结果
+      const updatedBook = await db.findOne('SELECT id, title, blogCoverUrl FROM Book WHERE id = ?', [bookId]);
+      if (updatedBook && updatedBook.blogCoverUrl === finalImageUrl) {
+        console.log('✅ Blog cover URL saved to database successfully');
+        console.log('📚 验证: 书籍', updatedBook.title, '(ID:', updatedBook.id, ') 的封面URL已更新');
+      } else {
+        console.error('❌ 保存失败或验证失败:', { updatedBook });
+      }
+      
+      res.json({
+        success: true,
+        blogCoverUrl: finalImageUrl,
+        data: {
+          blogCoverUrl: finalImageUrl,
+          imageUrl: finalImageUrl
+        }
+      });
+    } catch (uploadError) {
+      console.error('❌ Upload image to Qiniu failed:', uploadError);
+      throw new Error(`上传图片到七牛云失败: ${uploadError.message || uploadError}`);
+    }
     
   } catch (error) {
     console.error('生成博客封面图失败:', error);
@@ -1175,12 +1205,12 @@ router.post('/:bookId/extract', async (req, res) => {
       return;
     }
 
-    // 调用阿里云DashScope qwen-long-latest模型拆解书籍（基于文件内容）
-    const prompt = `你是一位拥有十年经验的资深书籍解读人，擅长将复杂的书本思想转化为直击人心的故事。请根据我上传的书籍文件为我深度拆解成${segments}视频脚本，目标是创作一段"让人看完久久不能平静"的视频脚本。
+    // 获取书籍拆解Prompt配置（从数据库读取，如果不存在则使用默认值）
+    let promptTemplate = `你是一位拥有十年经验的资深书籍解读人，擅长将复杂的书本思想转化为直击人心的故事。请根据我上传的书籍文件为我深度拆解成{segments}视频脚本，目标是创作一段"让人看完久久不能平静"的视频脚本。
 
 请遵循以下要求：
 1. **角色设定**：你不是在做学术报告，而是一位"灵魂摆渡人"式的讲述者——温柔、深刻、有洞察力，能看透人性的脆弱与光辉。
-2. **选择书籍**：上传的书籍《${book.title}》。
+2. **选择书籍**：上传的书籍《{bookTitle}》。
 3. **脚本风格**：
    - 情感真挚，语言富有文学性与哲思；
    - 能引发观众强烈共鸣，甚至落泪；
@@ -1195,9 +1225,9 @@ router.post('/:bookId/extract', async (req, res) => {
    - 语言口语化。
 
 书籍内容：
-${bookContent}
+{bookContent}
 
-现在，请为我生成这样${segments}刻骨铭心的书籍讲解视频脚本。每集需要包含：
+现在，请为我生成这样{segments}刻骨铭心的书籍讲解视频脚本。每集需要包含：
 
 1. chapterTitle (Chinese) - 本集标题（中文），具有吸引力和概括性
 2. chapterTitleEn (English) - Episode Title (English) - REQUIRED
@@ -1227,6 +1257,28 @@ Return in JSON format:
     }
   ]
 }`;
+
+    // 尝试从数据库读取保存的prompt配置
+    try {
+      const promptRows = await db.query(
+        'SELECT value FROM prompts WHERE key_name = ?',
+        ['book_decomposition_prompt']
+      );
+      if (promptRows && promptRows.length > 0) {
+        promptTemplate = promptRows[0].value;
+        console.log('📝 使用保存的Prompt配置');
+      } else {
+        console.log('📝 使用默认Prompt模板');
+      }
+    } catch (error) {
+      console.warn('⚠️ 读取Prompt配置失败，使用默认模板:', error.message);
+    }
+
+    // 替换模板变量
+    const prompt = promptTemplate
+      .replace(/{segments}/g, segments)
+      .replace(/{bookTitle}/g, book.title)
+      .replace(/{bookContent}/g, bookContent);
 
     console.log('📞 调用阿里云DashScope qwen-long-latest API，书籍:', book.title, '分段数:', segments);
     console.log('📞 使用附件文件内容拆解，文件URL:', fileUrl);
@@ -1740,6 +1792,15 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
     let audioBuffer = null;
     
     try {
+      // 验证文本长度和完整性
+      const textLength = finalText.length;
+      console.log('📋 准备发送给TTS API的文本长度:', textLength, '字符');
+      console.log('📋 文本结尾（后200字符）:', finalText.substring(Math.max(0, finalText.length - 200)));
+      
+      if (textLength > 10000) {
+        console.warn('⚠️ 文本长度超过10000字符，可能超出TTS API限制');
+      }
+      
       const requestBody = {
         model: 'qwen-tts',
         input: {
@@ -1749,7 +1810,9 @@ router.post('/content/:contentId/generate-audio', async (req, res) => {
         }
       };
       
-      console.log('📋 请求参数:', JSON.stringify(requestBody, null, 2));
+      // 记录请求体中的文本长度和结尾部分
+      console.log('📋 请求参数中的文本长度:', requestBody.input.text.length, '字符');
+      console.log('📋 请求参数中的文本结尾（后200字符）:', requestBody.input.text.substring(Math.max(0, requestBody.input.text.length - 200)));
       
       // 调用Qwen TTS API（SSE流式响应）
       const ttsResponse = await fetch(ALIYUN_TTS_URL, {
@@ -4641,7 +4704,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
             '-level 3.0', // H.264 level 3.0，确保兼容性
             '-c:a aac',
             '-b:a 128k',
-            '-shortest',
+            '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
             '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
           ]);
       } else {
@@ -4655,7 +4718,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
           '-level 3.0', // H.264 level 3.0，确保兼容性
           '-c:a aac',
           '-b:a 128k',
-          '-shortest',
+          '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
           '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
         ]);
       }
@@ -4730,7 +4793,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
                 '-level 3.0', // H.264 level 3.0，确保兼容性
                 '-c:a aac',
                 '-b:a 128k',
-                '-shortest',
+                '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
                 '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
               ]);
           } else {
@@ -4745,7 +4808,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
               '-aspect 9:16', // 设置宽高比
               '-c:a aac',
               '-b:a 128k',
-              '-shortest',
+              '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
               '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
             ]);
           }
@@ -5284,7 +5347,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
           '-c:v copy', // 复制视频流，不重新编码（大幅加快速度，输入视频应该已经是9:16）
           '-c:a aac', // 音频编码为AAC
           '-b:a 128k', // 音频比特率
-          '-shortest', // 以较短的流为准
+          '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
           '-movflags +faststart' // 优化web播放
         ])
         .output(tempOutputPath)
@@ -5327,7 +5390,7 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
                 '-aspect 9:16', // 设置宽高比
                 '-c:a aac',
                 '-b:a 128k',
-                '-shortest',
+                '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
                 '-movflags +faststart'
               ])
               .output(tempOutputPath)
@@ -6046,20 +6109,57 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     console.log(`   finalSummaryEn预览（前200字符）: ${finalSummaryEn ? finalSummaryEn.substring(0, 200) : '空'}...`);
     console.log(`   finalSummaryEn结尾（后100字符）: ${finalSummaryEn && finalSummaryEn.length > 100 ? '...' + finalSummaryEn.substring(finalSummaryEn.length - 100) : finalSummaryEn || '空'}`);
     
-    // 如果finalSummaryEn为空或太短，尝试从数据库重新获取
-    if (!finalSummaryEn || finalSummaryEn.trim().length < 50) {
-      console.warn('⚠️ finalSummaryEn为空或太短，尝试从数据库重新获取...');
+    // 在生成音频前，总是从数据库重新获取最新的summaryEn，确保使用完整数据
+    // 这样可以避免因为内存中的summaryEn不完整而丢失内容
+    console.log('📋 在生成音频前，从数据库重新获取最新的summaryEn，确保使用完整数据...');
+    try {
       const refreshedContentObj = await db.findOne('SELECT * FROM ExtractedContent WHERE id = ?', [contentId]);
-      if (refreshedContentObj) {
-        const dbSummaryEn = refreshedContentObj.summaryEn || '';
-        if (dbSummaryEn && dbSummaryEn.length > finalSummaryEn.length) {
-          console.log(`✅ 从数据库获取到更长的summaryEn: ${dbSummaryEn.length}字符`);
-          finalSummaryEn = dbSummaryEn;
+      if (refreshedContentObj && refreshedContentObj.summaryEn) {
+        const dbSummaryEn = refreshedContentObj.summaryEn.trim() || '';
+        if (dbSummaryEn.length > 0) {
+          const currentLength = finalSummaryEn ? finalSummaryEn.trim().length : 0;
+          const dbLength = dbSummaryEn.length;
+          console.log(`📋 数据库summaryEn长度: ${dbLength}字符，当前finalSummaryEn长度: ${currentLength}字符`);
+          
+          // 优先使用数据库中的summaryEn（这是最新保存的完整版本）
+          // 如果数据库中的summaryEn更长或相同，使用数据库的版本
+          // 这样可以确保使用最完整的数据
+          if (dbLength >= currentLength) {
+            console.log(`✅ 使用数据库中的完整summaryEn (${dbLength}字符)`);
+            finalSummaryEn = dbSummaryEn;
+            // 再次检查完整性
+            console.log(`📝 更新后的finalSummaryEn结尾（后200字符）: ${finalSummaryEn.length > 200 ? '...' + finalSummaryEn.substring(finalSummaryEn.length - 200) : finalSummaryEn}`);
+          } else if (currentLength === 0) {
+            // 如果当前为空但数据库有值，使用数据库的值
+            console.log(`✅ 使用数据库中的summaryEn (${dbLength}字符)`);
+            finalSummaryEn = dbSummaryEn;
+          } else {
+            console.log(`⚠️ 当前finalSummaryEn (${currentLength}字符) 比数据库中的 (${dbLength}字符) 更长，使用当前的`);
+            // 如果当前的更长，可能是用户自定义的，使用当前的
+          }
+        } else {
+          console.warn('⚠️ 数据库中的summaryEn为空');
         }
+      } else {
+        console.warn('⚠️ 无法从数据库获取contentObj或summaryEn');
       }
+    } catch (fetchError) {
+      console.error('❌ 从数据库重新获取summaryEn失败:', fetchError.message);
+      // 如果获取失败，继续使用当前的finalSummaryEn
     }
     
-    let audioText = `${finalSummaryEn}`.trim();
+    // 确保finalSummaryEn完整且不为空
+    if (!finalSummaryEn || finalSummaryEn.trim().length === 0) {
+      throw new Error('finalSummaryEn为空，无法生成音频');
+    }
+    
+    // 使用完整的finalSummaryEn，不进行任何截断
+    const completeSummaryEn = finalSummaryEn.trim();
+    console.log('📝 准备构建音频文本，summaryEn长度:', completeSummaryEn.length, '字符');
+    console.log('📝 summaryEn完整内容预览（前500字符）:', completeSummaryEn.substring(0, 500));
+    console.log('📝 summaryEn完整内容结尾（后500字符）:', completeSummaryEn.length > 500 ? '...' + completeSummaryEn.substring(completeSummaryEn.length - 500) : completeSummaryEn);
+    
+    let audioText = completeSummaryEn;
     // 根据 includeOpeningText 选项决定是否添加开场白
     if (includeOpeningText && openingTextEn && openingTextEn.trim()) {
       audioText = `${openingTextEn.trim()}${audioText}`;
@@ -6070,8 +6170,44 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       console.log(`📝 开场白: ${openingTextEn}`);
     }
     console.log('📝 最终英文文本长度:', finalAudioText.length, '字符');
-    console.log('📝 最终英文文本预览（前200字符）:', finalAudioText.substring(0, 200) + '...');
-    console.log('📝 最终英文文本结尾（后100字符）:', finalAudioText.length > 100 ? '...' + finalAudioText.substring(finalAudioText.length - 100) : finalAudioText);
+    console.log('📝 最终英文文本预览（前300字符）:', finalAudioText.substring(0, 300) + '...');
+    console.log('📝 最终英文文本结尾（后300字符）:', finalAudioText.length > 300 ? '...' + finalAudioText.substring(finalAudioText.length - 300) : finalAudioText);
+    
+    // 验证文本完整性 - 确保包含完整的summaryEn内容
+    console.log('📝 验证文本完整性:');
+    console.log('   finalSummaryEn长度:', finalSummaryEn ? finalSummaryEn.length : 0, '字符');
+    console.log('   finalAudioText长度:', finalAudioText.length, '字符');
+    
+    // 检查finalAudioText是否包含完整的finalSummaryEn
+    // 如果包含开场白，需要从finalAudioText中提取summaryEn部分进行比较
+    let summaryEnInAudio = finalAudioText;
+    if (includeOpeningText && openingTextEn && openingTextEn.trim()) {
+      // 如果包含开场白，提取summaryEn部分
+      const openingLength = openingTextEn.trim().length;
+      if (finalAudioText.startsWith(openingTextEn.trim())) {
+        summaryEnInAudio = finalAudioText.substring(openingLength).trim();
+        console.log('   finalAudioText包含开场白，提取的summaryEn部分长度:', summaryEnInAudio.length, '字符');
+      }
+    }
+    
+    // 比较长度，确保没有丢失内容
+    const summaryEnLength = finalSummaryEn ? finalSummaryEn.trim().length : 0;
+    const audioSummaryLength = summaryEnInAudio.trim().length;
+    if (summaryEnLength > 0 && audioSummaryLength < summaryEnLength * 0.9) {
+      console.warn('⚠️ 警告: finalAudioText中的summaryEn部分可能不完整');
+      console.warn(`   原始summaryEn长度: ${summaryEnLength}字符`);
+      console.warn(`   finalAudioText中的summaryEn长度: ${audioSummaryLength}字符`);
+    } else {
+      console.log('✅ 文本完整性验证通过');
+    }
+    
+    // 完整输出文本内容用于调试（如果文本不太长）
+    if (finalAudioText.length <= 2000) {
+      console.log('📝 最终英文文本完整内容:', finalAudioText);
+    } else {
+      console.log('📝 最终英文文本完整内容（前1000字符）:', finalAudioText.substring(0, 1000) + '...');
+      console.log('📝 最终英文文本完整内容（后1000字符）:', '...' + finalAudioText.substring(finalAudioText.length - 1000));
+    }
     
     // 使用阿里云DashScope Qwen TTS进行语音合成
     console.log('🔵 ========== 使用阿里云DashScope Qwen TTS ==========');
@@ -6091,6 +6227,16 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
     let audioBuffer = null;
     
     try {
+      // 验证文本长度 - Qwen TTS可能有字符限制
+      const textLength = finalAudioText.length;
+      console.log('📋 准备发送给TTS API的文本长度:', textLength, '字符');
+      
+      // 检查是否有字符限制（根据阿里云文档，Qwen TTS通常支持较长的文本，但为了安全起见，我们记录一下）
+      // 注意：根据代码注释，qwen-tts没有字符数限制，但实际可能有API限制
+      if (textLength > 10000) {
+        console.warn('⚠️ 文本长度超过10000字符，可能超出TTS API限制');
+      }
+      
       const requestBody = {
         model: 'qwen-tts',
         input: {
@@ -6100,7 +6246,17 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
         }
       };
       
-      console.log('📋 请求参数:', JSON.stringify(requestBody, null, 2));
+      // 记录请求体中的文本长度和结尾部分
+      console.log('📋 请求参数中的文本长度:', requestBody.input.text.length, '字符');
+      console.log('📋 请求参数中的文本结尾（后200字符）:', requestBody.input.text.substring(Math.max(0, requestBody.input.text.length - 200)));
+      console.log('📋 完整请求参数（文本部分）:', JSON.stringify({
+        model: requestBody.model,
+        input: {
+          text: requestBody.input.text.substring(0, 500) + '...' + requestBody.input.text.substring(Math.max(0, requestBody.input.text.length - 200)),
+          voice: requestBody.input.voice,
+          language_type: requestBody.input.language_type
+        }
+      }, null, 2));
       
       const ttsResponse = await fetch(ALIYUN_TTS_URL, {
         method: 'POST',
@@ -6722,7 +6878,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
             '-level 3.0', // H.264 level 3.0，确保兼容性
             '-c:a aac',
             '-b:a 128k',
-            '-shortest',
+            '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
             '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
           ]);
       } else {
@@ -6736,7 +6892,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
           '-level 3.0', // H.264 level 3.0，确保兼容性
           '-c:a aac',
           '-b:a 128k',
-          '-shortest',
+          '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
           '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
         ]);
       }
@@ -6810,7 +6966,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
                 '-level 3.0', // H.264 level 3.0，确保兼容性
                 '-c:a aac',
                 '-b:a 128k',
-                '-shortest',
+                '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
                 '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
               ]);
           } else {
@@ -6825,7 +6981,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
               '-aspect 9:16',
               '-c:a aac',
               '-b:a 128k',
-              '-shortest',
+              '-t', audioDuration.toString(), // 使用音频时长，确保音频完整播放
               '-movflags +faststart' // 优化web播放，将moov atom移到文件开头
             ]);
           }

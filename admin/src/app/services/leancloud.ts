@@ -79,6 +79,14 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
       // 响应已经在上面解析了
       const errorData = responseData || {};
       
+      // 特殊处理404错误 - 对于某些API，404是正常情况（如资源不存在）
+      if (response.status === 404) {
+        const error = new Error(errorData.message || 'Resource not found');
+        (error as any).status = 404;
+        (error as any).errorData = errorData;
+        throw error;
+      }
+      
       // 特殊处理429速率限制错误
       if (response.status === 429) {
         const retryAfter = errorData.retryAfter || 60;
@@ -90,6 +98,7 @@ export const apiRequest = async (endpoint: string, options: RequestInit = {}) =>
       const error = new Error(errorMessage);
       // 将完整的错误数据附加到错误对象上，方便调试
       (error as any).errorData = errorData;
+      (error as any).status = response.status;
       throw error;
     }
 
@@ -502,7 +511,12 @@ export const bookAPI = {
         method: 'POST',
         body: JSON.stringify({ customPrompt }),
       });
-      return response.success ? response.data : null;
+      console.log('✅ Generate blog cover API response:', response);
+      // 后端可能返回 response.data.blogCoverUrl 或 response.blogCoverUrl
+      if (response.success) {
+        return response.data || { blogCoverUrl: response.blogCoverUrl };
+      }
+      return null;
     } catch (error) {
       console.error('生成博客封面图失败:', error);
       throw error;
@@ -974,10 +988,19 @@ export const userAPI = {
   },
 
   // 获取用户列表（通过后端API，避免直接查询User表）
-  async getList(page: number = 1, limit: number = 20) {
+  async getList(page: number = 1, limit: number = 20, search?: string, status?: string) {
     try {
-      const response = await apiRequest(`/users?page=${page}&limit=${limit}`);
-      return response.success ? response.data : [];
+      const params = new URLSearchParams();
+      params.append('page', page.toString());
+      params.append('limit', limit.toString());
+      if (search) params.append('search', search);
+      if (status && status !== 'all') params.append('status', status);
+      
+      const response = await apiRequest(`/users?${params.toString()}`);
+      return {
+        data: response.success ? response.data : [],
+        pagination: response.pagination || { page, limit, total: 0 }
+      };
     } catch (error: any) {
       console.error('获取用户列表失败:', error);
       // 只处理真正的网络连接错误，业务错误直接抛出
@@ -1142,11 +1165,30 @@ export const dashboardAPI = {
   }
 };
 
+// Prompt管理API
+export const promptAPI = {
+  // 获取书籍拆解Prompt配置
+  async getBookDecompositionPrompt() {
+    return await apiRequest('/prompts/book-decomposition', {
+      method: 'GET'
+    });
+  },
+
+  // 保存书籍拆解Prompt配置
+  async saveBookDecompositionPrompt(prompt: string) {
+    return await apiRequest('/prompts/book-decomposition', {
+      method: 'POST',
+      body: JSON.stringify({ prompt })
+    });
+  }
+};
+
 export default {
   categoryAPI,
   bookAPI,
   videoAPI,
   userAPI,
   statisticsAPI,
-  dashboardAPI
+  dashboardAPI,
+  promptAPI
 };

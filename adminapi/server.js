@@ -230,6 +230,7 @@ const bookRoutes = require('./routes/books');
 const commentRoutes = require('./routes/comments');
 const followRoutes = require('./routes/follows');
 const notificationRoutes = require('./routes/notifications');
+const promptRoutes = require('./routes/prompts');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/videos', videoRoutes);
@@ -242,6 +243,7 @@ app.use('/api/books', bookRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/follows', followRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/prompts', promptRoutes);
 
 // 根路径处理
 app.get('/', (req, res) => {
@@ -261,7 +263,8 @@ app.get('/', (req, res) => {
       favorites: '/api/favorites',
       comments: '/api/comments',
       follows: '/api/follows',
-      notifications: '/api/notifications'
+      notifications: '/api/notifications',
+      prompts: '/api/prompts'
     },
     documentation: 'See /api/health for server status'
   });

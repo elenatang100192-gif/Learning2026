@@ -52,6 +52,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
 
     try {
       setIsSendingOTP(true);
+      console.log('🚀 Starting OTP request for:', email);
+      console.log('🌐 API URL:', import.meta.env.VITE_API_BASE_URL || 'https://nexusmind-api-test.ashgso.com/api/');
+      
       const result = await authAPI.sendOTP(email);
       console.log('🔍 OTP API Response:', result);
       
@@ -88,12 +91,38 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       } else {
         const errorMsg = result.message || displayT.sendCodeError || 'Failed to send code';
         setError(errorMsg);
-        console.error('Failed to send OTP:', result.message);
+        console.error('❌ Failed to send OTP:', result.message);
+        // 显示详细错误信息
+        toast.error('Failed to send code', {
+          description: errorMsg,
+          duration: 10000,
+        });
       }
     } catch (error: any) {
-      console.error('Failed to send OTP:', error);
-      const errorMsg = error?.message || displayT.sendCodeError || 'Failed to send code';
+      console.error('❌ Exception in sendOTP:', error);
+      console.error('❌ Error details:', {
+        message: error?.message,
+        status: error?.status,
+        isNetworkError: error?.isNetworkError,
+        stack: error?.stack,
+      });
+      
+      // 检查是否是网络错误
+      let errorMsg = '';
+      if (error?.isNetworkError || error?.message?.includes('Network error') || error?.message?.includes('Unable to connect')) {
+        errorMsg = 'Network error: Unable to connect to server. Please check your internet connection.';
+      } else if (error?.message) {
+        errorMsg = error.message;
+      } else {
+        errorMsg = displayT.sendCodeError || 'Failed to send code';
+      }
+      
       setError(errorMsg);
+      // 显示详细错误信息
+      toast.error('Request Failed', {
+        description: errorMsg,
+        duration: 15000,
+      });
     } finally {
       setIsSendingOTP(false);
     }
@@ -141,18 +170,48 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       }
 
       try {
+        console.log('🚀 Starting password login for:', email);
+        console.log('🔐 Password length:', password.length);
+        console.log('🌐 API URL:', import.meta.env.VITE_API_BASE_URL || 'https://nexusmind-api-test.ashgso.com/api/');
+        
         const user = await authAPI.loginWithPassword(email, password);
+        console.log('🔍 Password login API response:', user);
+        
         if (user) {
+          console.log('✅ Password login successful');
           setLanguage(selectedLanguage);
           localStorage.setItem('preferredLanguage', selectedLanguage);
           toast.success(displayT.loginSuccess || 'Login successful!');
           onLogin(user.email);
         } else {
+          console.error('❌ Password login failed: user is null');
           setError(displayT.loginError || 'Login failed, please check your password');
         }
       } catch (error: any) {
-        console.error('Password login failed:', error);
-        setError(error?.message || displayT.loginError || 'Login failed, please check your password');
+        console.error('❌ Password login exception:', error);
+        console.error('❌ Error details:', {
+          message: error?.message,
+          status: error?.status,
+          stack: error?.stack,
+        });
+        
+        // 显示详细错误信息
+        let errorMsg = '';
+        if (error?.message) {
+          errorMsg = error.message;
+        } else if (error?.status === 401) {
+          errorMsg = '密码错误，请检查您的密码';
+        } else if (error?.status === 404) {
+          errorMsg = '用户不存在，请联系管理员';
+        } else {
+          errorMsg = displayT.loginError || 'Login failed, please check your password';
+        }
+        
+        setError(errorMsg);
+        toast.error('Login Failed', {
+          description: errorMsg,
+          duration: 10000,
+        });
     } finally {
       setIsLoading(false);
       }

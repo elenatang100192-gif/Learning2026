@@ -141,7 +141,8 @@ router.get('/search', authenticateUser, [
 router.get('/', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
-  query('search').optional().isString()
+  query('search').optional().isString(),
+  query('status').optional().isIn(['all', 'canPublish', 'canComment', 'canAdmin', 'noPublish', 'noComment', 'noAdmin'])
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -153,7 +154,7 @@ router.get('/', [
       });
     }
 
-    const { page = 1, limit = 20, search = '' } = req.query;
+    const { page = 1, limit = 20, search = '', status = 'all' } = req.query;
 
     // 构建SQL查询
     let sql = 'SELECT * FROM User WHERE 1=1';
@@ -161,13 +162,43 @@ router.get('/', [
     const params = [];
     const countParams = [];
 
-    // 如果有搜索条件，添加搜索过滤
+    // 如果有搜索条件，添加搜索过滤（支持用户名和邮箱）
     if (search) {
-      sql += ` AND username LIKE ?`;
-      countSql += ` AND username LIKE ?`;
+      sql += ` AND (username LIKE ? OR email LIKE ?)`;
+      countSql += ` AND (username LIKE ? OR email LIKE ?)`;
       const searchPattern = `%${search}%`;
-      params.push(searchPattern);
-      countParams.push(searchPattern);
+      params.push(searchPattern, searchPattern);
+      countParams.push(searchPattern, searchPattern);
+    }
+
+    // 如果有状态筛选，添加状态过滤
+    if (status && status !== 'all') {
+      switch (status) {
+        case 'canPublish':
+          sql += ` AND canPublish = 1`;
+          countSql += ` AND canPublish = 1`;
+          break;
+        case 'canComment':
+          sql += ` AND canComment = 1`;
+          countSql += ` AND canComment = 1`;
+          break;
+        case 'canAdmin':
+          sql += ` AND canAdmin = 1`;
+          countSql += ` AND canAdmin = 1`;
+          break;
+        case 'noPublish':
+          sql += ` AND canPublish = 0`;
+          countSql += ` AND canPublish = 0`;
+          break;
+        case 'noComment':
+          sql += ` AND canComment = 0`;
+          countSql += ` AND canComment = 0`;
+          break;
+        case 'noAdmin':
+          sql += ` AND canAdmin = 0`;
+          countSql += ` AND canAdmin = 0`;
+          break;
+      }
     }
 
     // 排序和分页

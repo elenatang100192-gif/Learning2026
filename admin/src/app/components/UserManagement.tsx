@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './ui/alert-dialog';
 import { Label } from './ui/label';
 import { Checkbox } from './ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Search, RefreshCw, UserPlus, Trash2, Settings, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import { userAPI, type User } from '../services/leancloud';
@@ -19,6 +20,8 @@ export function UserManagement() {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
 
   // 创建用户对话框状态
@@ -52,20 +55,33 @@ export function UserManagement() {
   // 加载数据
   useEffect(() => {
     loadData();
-  }, [currentPage, searchTerm]);
+  }, [currentPage, activeSearchTerm, statusFilter]);
 
   const loadData = async () => {
     try {
       setLoading(true);
 
-      // 加载用户数据
-      const usersData = await userAPI.getList(currentPage, 20);
-      setUsers(usersData);
+      // 加载用户数据，传递search和status参数
+      const result = await userAPI.getList(currentPage, 20, activeSearchTerm || undefined, statusFilter !== 'all' ? statusFilter : undefined);
+      setUsers(result.data);
     } catch (error) {
       console.error('加载用户数据失败:', error);
       toast.error('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 处理搜索
+  const handleSearch = () => {
+    setActiveSearchTerm(searchTerm);
+    setCurrentPage(1); // 搜索时重置到第一页
+  };
+
+  // 处理回车键搜索
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleSearch();
     }
   };
 
@@ -194,12 +210,8 @@ export function UserManagement() {
     }
   };
 
-  // 本地搜索（API已经支持服务端搜索，这里作为额外过滤）
-  const filteredUsers = users.filter(user =>
-    !searchTerm ||
-    (user.username && user.username.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+      // 不再需要本地过滤，因为API已经支持服务端搜索和筛选
+      const filteredUsers = users;
 
   if (loading) {
     return (
@@ -420,14 +432,43 @@ export function UserManagement() {
         </DialogContent>
       </Dialog>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search by username or email..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
-        />
+      <div className="flex gap-4 items-center">
+        <div className="relative flex-1 flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by username or email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="pl-10"
+            />
+          </div>
+          <Button onClick={handleSearch} variant="default" size="default">
+            <Search className="mr-2 h-4 w-4" />
+            Search
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="status-filter" className="whitespace-nowrap">Status:</Label>
+          <Select value={statusFilter} onValueChange={(value) => {
+            setStatusFilter(value);
+            setCurrentPage(1); // 筛选时重置到第一页
+          }}>
+            <SelectTrigger id="status-filter" className="w-[180px]">
+              <SelectValue placeholder="All Users" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Users</SelectItem>
+              <SelectItem value="canPublish">Can Publish</SelectItem>
+              <SelectItem value="canComment">Can Comment</SelectItem>
+              <SelectItem value="canAdmin">Admin Access</SelectItem>
+              <SelectItem value="noPublish">Cannot Publish</SelectItem>
+              <SelectItem value="noComment">Cannot Comment</SelectItem>
+              <SelectItem value="noAdmin">No Admin Access</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <Card className="p-6">
