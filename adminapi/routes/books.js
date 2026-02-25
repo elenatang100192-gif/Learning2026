@@ -2665,7 +2665,8 @@ ${textContent}
     const concatenatedVideoPath = path.join(tempDir, `concatenated_${contentId}_${timestamp}.mp4`);
     const concatFilePath = path.join(tempDir, `concat_${contentId}_${timestamp}.txt`);
     const concatFileContent = tempVideoSegmentPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-    await fs.writeFile(concatFilePath, concatFileContent);
+    // 明确指定 UTF-8 编码，确保文件路径中的中文字符正确写入
+    await fs.writeFile(concatFilePath, concatFileContent, { encoding: 'utf8' });
     
     await new Promise((resolve, reject) => {
       let timeoutId = null;
@@ -2748,7 +2749,8 @@ ${textContent}
       // 创建重复播放的视频列表文件
       const repeatConcatFilePath = path.join(tempDir, `repeat_concat_${contentId}_${timestamp}.txt`);
       const repeatConcatContent = Array(repeatCount).fill(concatenatedVideoPath).map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-      await fs.writeFile(repeatConcatFilePath, repeatConcatContent);
+      // 明确指定 UTF-8 编码，确保文件路径中的中文字符正确写入
+      await fs.writeFile(repeatConcatFilePath, repeatConcatContent, { encoding: 'utf8' });
       
       // 重复拼接视频
       finalVideoPath = path.join(tempDir, `final_repeated_${contentId}_${timestamp}.mp4`);
@@ -3092,12 +3094,12 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
     const srtContent = convertParaformerResultToSRT(transcriptionText, language);
     
     // 确保使用UTF-8 BOM编码，避免中文乱码
-    // 使用Buffer确保UTF-8 BOM正确写入
-    const BOM = Buffer.from('\uFEFF', 'utf8');
-    const srtContentBuffer = Buffer.from(srtContent, 'utf8');
-    const srtContentWithBOM = Buffer.concat([BOM, srtContentBuffer]);
+    // 在字符串前添加UTF-8 BOM字符（\uFEFF）
+    const srtContentWithBOM = '\uFEFF' + srtContent;
     
-    await fs.writeFile(srtPath, srtContentWithBOM);
+    // 直接写入字符串，明确指定 encoding='utf8' 确保文件以 UTF-8 编码写入
+    // 使用字符串而不是 Buffer，这样可以正确应用 encoding 选项
+    await fs.writeFile(srtPath, srtContentWithBOM, { encoding: 'utf8' });
     console.log(`✅ 字幕文件生成成功: ${srtPath}`);
     console.log(`📝 字幕文件编码: UTF-8 with BOM`);
     console.log(`📝 字幕内容预览（前200字符）: ${srtContent.substring(0, 200)}`);
@@ -5255,7 +5257,8 @@ async function generateVideoWithTextToVideo(req, res, contentId, audioUrl) {
     // 创建ffmpeg concat文件
     const concatFilePath = path.join(tempDir, `concat_${contentId}_${timestamp}.txt`);
     const concatFileContent = tempVideoSegmentPaths.map(p => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-    await fs.writeFile(concatFilePath, concatFileContent);
+    // 明确指定 UTF-8 编码，确保文件路径中的中文字符正确写入
+    await fs.writeFile(concatFilePath, concatFileContent, { encoding: 'utf8' });
     
     await new Promise((resolve, reject) => {
       let timeoutId = null;
@@ -6650,7 +6653,8 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
       // 创建视频列表文件用于concat
       concatListPath = path.join(tempDir, `concat_list_${contentId}_${timestamp}.txt`);
       const concatListContent = Array(repeatCount).fill(`file '${tempVideoPath.replace(/'/g, "\\'")}'`).join('\n');
-      await fs.writeFile(concatListPath, concatListContent);
+      // 明确指定 UTF-8 编码，确保文件路径中的中文字符正确写入
+      await fs.writeFile(concatListPath, concatListContent, { encoding: 'utf8' });
       console.log('📝 创建视频拼接列表文件:', concatListPath);
       
       // 拼接重复的视频
@@ -6743,7 +6747,8 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
           `file '${concatenatedVideoPath.replace(/'/g, "\\'")}'`, // 先包含已拼接的视频
           ...Array(additionalRepeatCount).fill(`file '${tempVideoPath.replace(/'/g, "\\'")}'`) // 再添加额外的重复
         ].join('\n');
-        await fs.writeFile(additionalConcatListPath, additionalConcatContent);
+        // 明确指定 UTF-8 编码，确保文件路径中的中文字符正确写入
+        await fs.writeFile(additionalConcatListPath, additionalConcatContent, { encoding: 'utf8' });
         console.log('📝 创建额外拼接列表文件:', additionalConcatListPath);
         
         // 再次拼接

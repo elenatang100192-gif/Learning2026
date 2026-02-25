@@ -1,6 +1,6 @@
 {
   "appId": "com.ashleyfurniture.nexusmind",
-  "appName": "NexusMind Short Video",
+  "appName": "NexusMind",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",

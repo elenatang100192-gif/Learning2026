@@ -34,18 +34,20 @@ interface VideoCardProps {
 export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
   const { t, language } = useLanguage();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showControls, setShowControls] = useState(true);
+  const [showControls, setShowControls] = useState(false); // 初始不显示播放按钮，登录后自动播放
   const [progress, setProgress] = useState(0);
   const [isFollowing, setIsFollowing] = useState(video.isFollowing);
   const [isMuted, setIsMuted] = useState(!parentHasUserInteracted); // 如果用户已交互，默认不静音
   const [hasUserInteracted, setHasUserInteracted] = useState(parentHasUserInteracted); // 跟踪用户是否已交互
+  const [hasError, setHasError] = useState(false); // 跟踪视频加载错误状态
+  const [retryCount, setRetryCount] = useState(0); // 重试次数
+  const [isLoading, setIsLoading] = useState(true); // 跟踪视频是否正在加载
 
   // 当video.isFollowing变化时更新状态
   useEffect(() => {
     setIsFollowing(video.isFollowing);
   }, [video.isFollowing]);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hideControlsTimeout = useRef<NodeJS.Timeout | undefined>(undefined);
 
   // 根据语言选择视频URL：英文优先使用videoUrlEn，如果没有则使用videoUrl
   const currentVideoUrl = language === 'en' && video.videoUrlEn 
@@ -70,6 +72,11 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
     const wasPlaying = !videoRef.current.paused;
     const currentTime = videoRef.current.currentTime;
     
+    // 重置错误状态和重试次数
+    setHasError(false);
+    setRetryCount(0);
+    setIsLoading(true); // URL 变化时，开始加载
+    
     // 直接设置新源，不清空（避免黑屏）
     // 使用 requestAnimationFrame 确保在下一帧设置，避免闪烁
     requestAnimationFrame(() => {
@@ -81,13 +88,26 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
     if (wasPlaying && isActive) {
         const tryResume = () => {
           if (!videoRef.current) return;
+          // 检查网络状态
+          if (videoRef.current.networkState === 2) {
+            setHasError(true);
+            setIsLoading(true); // 网络错误，显示 loading
+            return;
+          }
           if (videoRef.current.readyState >= 2) {
       videoRef.current.currentTime = currentTime;
             videoRef.current.muted = isMuted;
-      videoRef.current.play().catch(() => {
-              // 静默处理错误
+      videoRef.current.play().then(() => {
+                setHasError(false);
+                setIsPlaying(true);
+                setIsLoading(false); // 播放成功，隐藏 loading
+                setShowControls(false);
+      }).catch(() => {
+                setHasError(true);
+                setIsLoading(true); // 播放失败，显示 loading
       });
           } else {
+            setIsLoading(true); // 等待加载
             videoRef.current.addEventListener('canplay', tryResume, { once: true });
           }
         };
@@ -126,6 +146,20 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
       const tryPlay = () => {
         if (!videoRef.current || !isActive) return;
         
+        // 检查网络状态，如果是错误状态，显示 loading 并等待重试
+        if (videoRef.current.networkState === 2) {
+          console.warn('⚠️ 视频网络错误，显示 loading 等待重试');
+          setHasError(true);
+          setIsLoading(true); // 显示 loading，因为会自动重试
+          setShowControls(false); // 隐藏播放按钮
+          return;
+        }
+        
+        // 如果视频还没加载完成，显示 loading
+        if (videoRef.current.readyState < 4) {
+          setIsLoading(true);
+        }
+        
         // 确保视频源已设置
         if (!videoRef.current.src || videoRef.current.src === '') {
           videoRef.current.src = currentVideoUrl;
@@ -135,32 +169,54 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
         if (videoRef.current.readyState >= 2) {
           videoRef.current.play().then(() => {
             setIsPlaying(true);
+            setHasError(false);
+            setIsLoading(false); // 加载完成
+            setShowControls(false); // 播放成功后隐藏控制按钮
           }).catch((error) => {
-            // 静默处理错误，避免控制台噪音
+            console.error('自动播放失败:', error);
+            setHasError(true);
+            setIsLoading(true); // 播放失败，继续显示 loading
           });
         } else if (videoRef.current.readyState >= 1) {
           // 如果有元数据，也可以尝试播放
           videoRef.current.play().then(() => {
             setIsPlaying(true);
+            setHasError(false);
+            setIsLoading(false); // 加载完成
+            setShowControls(false);
           }).catch(() => {
             // 如果失败，等待 canplay
+            setIsLoading(true); // 等待加载
             const onCanPlay = () => {
               if (!videoRef.current || !isActive) return;
               videoRef.current.removeEventListener('canplay', onCanPlay);
               videoRef.current.play().then(() => {
                 setIsPlaying(true);
-              }).catch(() => {});
+                setHasError(false);
+                setIsLoading(false); // 加载完成
+                setShowControls(false);
+              }).catch(() => {
+                setHasError(true);
+                setIsLoading(true); // 继续显示 loading
+              });
             };
             videoRef.current.addEventListener('canplay', onCanPlay, { once: true });
           });
         } else {
           // 如果视频还没加载，等待加载完成
+          setIsLoading(true); // 开始加载
           const onCanPlay = () => {
             if (!videoRef.current || !isActive) return;
             videoRef.current.removeEventListener('canplay', onCanPlay);
             videoRef.current.play().then(() => {
               setIsPlaying(true);
-            }).catch(() => {});
+              setHasError(false);
+              setIsLoading(false); // 加载完成
+              setShowControls(false);
+            }).catch(() => {
+              setHasError(true);
+              setIsLoading(true); // 继续显示 loading
+            });
           };
           
           videoRef.current.addEventListener('canplay', onCanPlay, { once: true });
@@ -232,15 +288,40 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
       // 暂停当前视频
       videoRef.current.pause();
       setIsPlaying(false);
+      setShowControls(true); // 暂停时显示控制按钮
     } else {
       // 播放当前视频（只有激活的视频才能播放）
       if (isActive) {
+        // 检查网络状态，如果是错误状态，先尝试重新加载
+        if (videoRef.current.networkState === 2) {
+          console.log('🔄 检测到网络错误，尝试重新加载视频...');
+          setRetryCount(prev => prev + 1);
+          setIsLoading(true); // 显示 loading
+          videoRef.current.src = '';
+          videoRef.current.load();
+          setTimeout(() => {
+            if (videoRef.current && isActive) {
+              videoRef.current.src = currentVideoUrl;
+              videoRef.current.load();
+              setHasError(false);
+              setIsLoading(true); // 继续显示 loading
+            }
+          }, 500);
+          return; // 等待重新加载完成
+        }
+        
         // 确保视频已加载
         if (videoRef.current.readyState < 2) {
+          setIsLoading(true); // 开始加载
           videoRef.current.load();
         }
         videoRef.current.muted = isMuted; // 使用当前静音状态
-        videoRef.current.play().catch((error) => {
+        videoRef.current.play().then(() => {
+          setIsPlaying(true);
+          setHasError(false);
+          setIsLoading(false); // 播放成功，隐藏 loading
+          setShowControls(false); // 播放成功后隐藏控制按钮
+        }).catch((error) => {
           console.error('播放失败:', error);
           console.error('视频 URL:', currentVideoUrl);
           console.error('视频元素状态:', {
@@ -249,19 +330,26 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
             networkState: videoRef.current?.networkState,
             error: videoRef.current?.error?.message || videoRef.current?.error?.code
           });
+          setHasError(true);
+          setIsPlaying(false);
+          setIsLoading(true); // 播放失败，显示 loading
+          // 如果是网络错误，尝试重新加载
+          if (videoRef.current && videoRef.current.networkState === 2 && retryCount < 3) {
+            setRetryCount(prev => prev + 1);
+            setTimeout(() => {
+              if (videoRef.current && isActive) {
+                videoRef.current.load();
+              }
+            }, 2000);
+          }
         });
-      setIsPlaying(true);
       }
     }
 
-    // 显示控制条
-    setShowControls(true);
-    if (hideControlsTimeout.current) {
-      clearTimeout(hideControlsTimeout.current);
-    }
-    hideControlsTimeout.current = setTimeout(() => {
-      if (!isPlaying) setShowControls(false);
-    }, 3000);
+    // 注意：showControls 已经在暂停/播放时正确设置了
+    // 不需要额外的自动隐藏逻辑，因为：
+    // - 暂停时：setShowControls(true) - 显示播放按钮
+    // - 播放时：setShowControls(false) - 隐藏播放按钮
   };
 
   // 更新进度条
@@ -379,8 +467,13 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
               errorType: errorMessages[error?.code || 0] || '未知错误类型'
             });
             
-            // 如果是格式不支持错误（代码 4）或网络错误（代码 3）
-            if (error?.code === 4 || error?.code === 3) {
+            // 设置错误状态，隐藏播放按钮
+            setHasError(true);
+            setIsPlaying(false);
+            setShowControls(false);
+            
+            // 如果是网络错误（networkState: 2）或格式不支持错误（代码 4）或解码错误（代码 3）
+            if (videoEl.networkState === 2 || error?.code === 2 || error?.code === 4 || error?.code === 3) {
               console.warn('⚠️ 视频加载错误:', {
                 code: error?.code,
                 message: error?.message,
@@ -389,37 +482,75 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                 url: currentVideoUrl
               });
               
-              // networkState: 3 表示 NETWORK_NO_SOURCE，可能是 iOS 模拟器限制
-              if (videoEl.networkState === 3) {
+              // networkState: 2 表示网络错误，需要重试，显示 loading
+              if (videoEl.networkState === 2 && retryCount < 3) {
+                console.log(`🔄 网络错误，尝试重新加载视频 (第 ${retryCount + 1} 次)...`);
+                setRetryCount(prev => prev + 1);
+                setIsLoading(true); // 网络错误，显示 loading 等待重试
+                
+                // 延迟重试，避免立即重试导致的问题
+                setTimeout(() => {
+                  if (videoEl && isActive && videoEl.networkState === 2) {
+                    videoEl.src = '';
+                    videoEl.load();
+                    setTimeout(() => {
+                      if (videoEl && isActive) {
+                        videoEl.src = currentVideoUrl;
+                        videoEl.load();
+                        setHasError(false); // 重置错误状态，准备重试
+                        setIsLoading(true); // 继续显示 loading
+                      }
+                    }, 500);
+                  }
+                }, 2000 * (retryCount + 1)); // 递增延迟
+              } else if (videoEl.networkState === 3) {
+                // networkState: 3 表示 NETWORK_NO_SOURCE，可能是 iOS 模拟器限制
                 console.warn('⚠️ iOS 模拟器可能不支持此视频格式或存在网络限制');
                 console.warn('💡 建议：在真机上测试，或检查视频服务器配置');
+                setIsLoading(true); // 显示 loading
+                
+                // 尝试重新加载一次
+                setTimeout(() => {
+                  if (videoEl && isActive && videoEl.networkState === 3) {
+                    console.log('🔄 尝试重新加载视频...');
+                    videoEl.src = '';
+                    videoEl.load();
+                    setTimeout(() => {
+                      if (videoEl && isActive) {
+                        videoEl.src = currentVideoUrl;
+                        videoEl.load();
+                        setHasError(false);
+                        setIsLoading(true); // 继续显示 loading
+                      }
+                    }, 500);
+                  }
+                }, 2000);
+              } else {
+                // 其他错误，不显示 loading（因为不会重试）
+                setIsLoading(false);
               }
-              
-              // 尝试重新加载一次
-              setTimeout(() => {
-                if (videoEl && isActive && videoEl.networkState === 3) {
-                  console.log('🔄 尝试重新加载视频...');
-                  videoEl.src = '';
-                  videoEl.load();
-                  setTimeout(() => {
-                    if (videoEl && isActive) {
-                      videoEl.src = currentVideoUrl;
-                      videoEl.load();
-                    }
-                  }, 500);
-                }
-              }, 2000);
+            } else {
+              // 其他类型的错误，不显示 loading
+              setIsLoading(false);
             }
           }}
           onLoadedData={() => {
             console.log('✅ 视频数据加载完成:', currentVideoUrl);
+            // 重置错误状态和重试次数
+            setHasError(false);
+            setRetryCount(0);
+            setIsLoading(false); // 数据加载完成
             // 只有激活状态时才播放
             if (isActive && !isPlaying && videoRef.current) {
               videoRef.current.muted = isMuted;
               videoRef.current.play().then(() => {
                 setIsPlaying(true);
+                setIsLoading(false); // 播放成功，隐藏 loading
+                setShowControls(false); // 播放成功后隐藏控制按钮
               }).catch((error) => {
                 console.error('onLoadedData 后播放失败:', error);
+                setHasError(true);
+                setIsLoading(true); // 播放失败，继续显示 loading
               });
             } else if (!isActive && videoRef.current && !videoRef.current.paused) {
               // 如果不是激活状态，确保暂停
@@ -429,13 +560,20 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
           }}
           onCanPlay={() => {
             console.log('✅ 视频可以播放:', currentVideoUrl);
+            // 重置错误状态
+            setHasError(false);
+            setIsLoading(false); // 可以播放，隐藏 loading
             // 只有激活状态时才播放
             if (isActive && !isPlaying && videoRef.current) {
               videoRef.current.muted = isMuted;
               videoRef.current.play().then(() => {
                 setIsPlaying(true);
-              }).catch(() => {
-                // 静默处理错误
+                setIsLoading(false); // 播放成功，隐藏 loading
+                setShowControls(false); // 播放成功后隐藏控制按钮
+              }).catch((error) => {
+                console.error('onCanPlay 后播放失败:', error);
+                setHasError(true);
+                setIsLoading(true); // 播放失败，继续显示 loading
               });
             } else if (!isActive && videoRef.current && !videoRef.current.paused) {
               // 如果不是激活状态，确保暂停
@@ -453,13 +591,31 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                 readyState: videoRef.current.readyState,
                 networkState: videoRef.current.networkState
               });
+              // 检查网络状态，如果是错误状态，设置错误标志并显示 loading
+              if (videoRef.current.networkState === 2) {
+                console.error('⚠️ 视频元数据加载时检测到网络错误');
+                setHasError(true);
+                setIsLoading(true); // 网络错误，显示 loading 等待重试
+              } else {
+                setHasError(false);
+                // 如果 readyState < 4，还在加载中
+                if (videoRef.current.readyState < 4) {
+                  setIsLoading(true);
+                } else {
+                  setIsLoading(false);
+                }
+              }
               // 只有激活状态时才播放
-              if (isActive && !isPlaying) {
+              if (isActive && !isPlaying && !hasError) {
                 videoRef.current.muted = isMuted;
                 videoRef.current.play().then(() => {
                   setIsPlaying(true);
-                }).catch(() => {
-                  // 静默处理错误
+                  setIsLoading(false); // 播放成功，隐藏 loading
+                  setShowControls(false); // 播放成功后隐藏控制按钮
+                }).catch((error) => {
+                  console.error('onLoadedMetadata 后播放失败:', error);
+                  setHasError(true);
+                  setIsLoading(true); // 播放失败，继续显示 loading
                 });
               } else if (!isActive && !videoRef.current.paused) {
                 // 如果不是激活状态，确保暂停
@@ -470,18 +626,30 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
           }}
           onWaiting={() => {
             console.log('⏳ 视频缓冲中:', currentVideoUrl);
+            setIsLoading(true); // 缓冲中，显示 loading
           }}
           onStalled={() => {
             console.warn('⚠️ 视频加载停滞:', currentVideoUrl);
+            setIsLoading(true); // 停滞，显示 loading
             // 如果视频停滞超过 5 秒，尝试重新加载
             if (videoRef.current && isActive) {
               setTimeout(() => {
                 if (videoRef.current && videoRef.current.networkState === 2) {
                   console.log('🔄 视频停滞超时，尝试重新加载...');
-                  videoRef.current.load();
+                  setHasError(true);
+                  setIsLoading(true); // 继续显示 loading
+                  if (retryCount < 3) {
+                    setRetryCount(prev => prev + 1);
+                    videoRef.current.load();
+                  }
                 }
               }, 5000);
             }
+          }}
+          onPlaying={() => {
+            // 视频开始播放时，确保隐藏 loading
+            setIsLoading(false);
+            setIsPlaying(true);
           }}
           onProgress={() => {
             // 监控加载进度
@@ -506,12 +674,25 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
         />
       </div>
 
-      {/* 播放/暂停图标 - 居中显示，缩小尺寸 */}
-      {showControls && !isPlaying && (
+      {/* 播放/暂停图标 - 居中显示，缩小尺寸（仅在非错误状态时显示） */}
+      {showControls && !isPlaying && !hasError && (
         <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-10" style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
           <div className="w-16 h-16 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md border-2 border-white/30">
             <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
+            </svg>
+          </div>
+        </div>
+      )}
+      
+      {/* Loading 提示 - 当视频加载中或网络错误时显示 */}
+      {isLoading && (
+        <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-10" style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
+          <div className="w-16 h-16 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md border-2 border-white/30">
+            {/* Loading 旋转动画 */}
+            <svg className="w-10 h-10 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
           </div>
         </div>
