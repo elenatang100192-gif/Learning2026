@@ -1,6 +1,23 @@
 // 加载环境变量（必须在其他模块之前加载）
 require('dotenv').config();
 
+// 设置 UTF-8 编码环境变量，确保文件操作和 FFmpeg 正确处理中文字符
+// 这可以解决在不同服务器环境下中文乱码的问题
+if (!process.env.LANG) {
+  process.env.LANG = 'en_US.UTF-8';
+}
+if (!process.env.LC_ALL) {
+  process.env.LC_ALL = 'en_US.UTF-8';
+}
+if (!process.env.LC_CTYPE) {
+  process.env.LC_CTYPE = 'en_US.UTF-8';
+}
+console.log('🌐 环境编码设置:', {
+  LANG: process.env.LANG,
+  LC_ALL: process.env.LC_ALL,
+  LC_CTYPE: process.env.LC_CTYPE
+});
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

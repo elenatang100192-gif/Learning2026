@@ -3097,11 +3097,33 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
     // 在字符串前添加UTF-8 BOM字符（\uFEFF）
     const srtContentWithBOM = '\uFEFF' + srtContent;
     
-    // 直接写入字符串，明确指定 encoding='utf8' 确保文件以 UTF-8 编码写入
-    // 使用字符串而不是 Buffer，这样可以正确应用 encoding 选项
-    await fs.writeFile(srtPath, srtContentWithBOM, { encoding: 'utf8' });
+    // 使用 Buffer.from 明确指定 UTF-8 编码，确保在不同服务器环境下都能正确写入
+    // 这样可以避免服务器环境变量（LANG, LC_ALL）影响文件编码
+    const srtBuffer = Buffer.from(srtContentWithBOM, 'utf8');
+    
+    // 写入文件时使用 Buffer，确保编码一致性
+    // 注意：使用 Buffer 写入时，不需要指定 encoding 选项（Buffer 已经是二进制数据）
+    await fs.writeFile(srtPath, srtBuffer);
+    
+    // 验证文件编码：读取文件前3个字节，检查是否为 UTF-8 BOM (EF BB BF)
+    const verifyBuffer = await fs.readFile(srtPath, { encoding: null });
+    const bomBytes = verifyBuffer.slice(0, 3);
+    const hasBOM = bomBytes[0] === 0xEF && bomBytes[1] === 0xBB && bomBytes[2] === 0xBF;
+    
+    if (!hasBOM) {
+      console.warn('⚠️ 警告：字幕文件 BOM 验证失败，可能编码不正确');
+      // 重新写入，确保 BOM 正确
+      const correctBuffer = Buffer.concat([
+        Buffer.from([0xEF, 0xBB, 0xBF]), // UTF-8 BOM 字节序列
+        Buffer.from(srtContent, 'utf8')
+      ]);
+      await fs.writeFile(srtPath, correctBuffer);
+      console.log('✅ 已重新写入字幕文件，确保 BOM 正确');
+    }
+    
     console.log(`✅ 字幕文件生成成功: ${srtPath}`);
-    console.log(`📝 字幕文件编码: UTF-8 with BOM`);
+    console.log(`📝 字幕文件编码: UTF-8 with BOM (已验证)`);
+    console.log(`📝 字幕文件大小: ${(await fs.stat(srtPath)).size} 字节`);
     console.log(`📝 字幕内容预览（前200字符）: ${srtContent.substring(0, 200)}`);
     
     return srtPath;

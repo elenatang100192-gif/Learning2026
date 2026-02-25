@@ -1,6 +1,11 @@
 # 使用 Node.js 18 官方镜像作为基础镜像
 FROM node:18
 
+# 设置 UTF-8 编码环境变量，确保正确处理中文字符
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV LC_CTYPE=en_US.UTF-8
+
 # 设置工作目录
 WORKDIR /app
 
