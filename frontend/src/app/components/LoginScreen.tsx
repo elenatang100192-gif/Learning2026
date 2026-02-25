@@ -219,15 +219,23 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
   };
 
   return (
-    <div className="h-screen w-full bg-gradient-to-br from-black via-zinc-900 to-zinc-800 flex items-center justify-center p-4 relative overflow-hidden">
+    <div 
+      className="w-full bg-gradient-to-br from-black via-zinc-900 to-zinc-800 flex items-center justify-center p-4 relative overflow-hidden"
+      style={{
+        height: '100dvh',
+        minHeight: '-webkit-fill-available',
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}
+    >
       {/* 科技感背景效果 */}
-      <div className="absolute inset-0 opacity-20">
+      <div className="absolute inset-0 opacity-20" style={{ top: '-env(safe-area-inset-top, 0px)', bottom: '-env(safe-area-inset-bottom, 0px)' }}>
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-white rounded-full mix-blend-multiply filter blur-3xl animate-pulse"></div>
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-gray-400 rounded-full mix-blend-multiply filter blur-3xl animate-pulse" style={{ animationDelay: '2s' }}></div>
       </div>
       
       {/* Grid background */}
-      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.02)_1px,transparent_1px)] bg-[size:50px_50px]"></div>
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.02)_1px,transparent_1px)] bg-[size:50px_50px]" style={{ top: '-env(safe-area-inset-top, 0px)', bottom: '-env(safe-area-inset-bottom, 0px)' }}></div>
       
       
       <div className="w-full max-w-md bg-gradient-to-br from-zinc-900/90 to-black/90 backdrop-blur-xl rounded-2xl shadow-2xl p-8 border border-white/10 relative z-10">

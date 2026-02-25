@@ -343,9 +343,9 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
   };
 
   return (
-    <div className="relative h-full w-full bg-black flex items-center justify-center">
+    <div className="relative h-full w-full bg-black flex items-center justify-center" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
       {/* 视频 - 抖音风格：固定位置，自适应不同手机尺寸 */}
-      <div className="absolute inset-0 w-full h-full">
+      <div className="absolute inset-0 w-full h-full" style={{ top: '-env(safe-area-inset-top, 0px)' }}>
         <video
           ref={videoRef}
           className="w-full h-full object-cover bg-black"
@@ -499,15 +499,18 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
             objectFit: 'cover',
             objectPosition: 'center',
             backgroundColor: '#000', // 确保背景是黑色，避免白屏
+            marginTop: '-env(safe-area-inset-top, 0px)',
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            height: 'calc(100% + env(safe-area-inset-top, 0px))',
           }}
         />
       </div>
 
-      {/* 播放/暂停图标 - 抖音风格：更大更明显 */}
+      {/* 播放/暂停图标 - 居中显示，缩小尺寸 */}
       {showControls && !isPlaying && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-          <div className="w-24 h-24 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md border-2 border-white/30">
-            <svg className="w-14 h-14 text-white ml-2" fill="currentColor" viewBox="0 0 24 24">
+        <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-10" style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
+          <div className="w-16 h-16 bg-black/40 rounded-full flex items-center justify-center backdrop-blur-md border-2 border-white/30">
+            <svg className="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
               <path d="M8 5v14l11-7z" />
             </svg>
           </div>

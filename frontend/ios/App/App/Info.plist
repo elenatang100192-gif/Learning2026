@@ -87,5 +87,9 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app needs network access to load videos and content.</string>
+	<key>NSBonjourServices</key>
+	<array/>
 </dict>
 </plist>

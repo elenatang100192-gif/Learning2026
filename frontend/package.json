@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "build:mobile": "CAPACITOR=true vite build && ./fix-asset-paths.sh",
+    "build:mobile": "CAPACITOR=true vite build",
     "dev": "vite",
-    "cap:sync": "npm run build:mobile && npx cap sync",
+    "cap:sync": "npm run build:mobile && npx cap sync && ./fix-ios-paths.sh",
     "cap:ios": "npm run cap:sync && npx cap open ios",
     "cap:android": "npm run cap:sync && npx cap open android",
     "cap:ios:build": "npm run cap:sync && cd ios && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive -archivePath ./build/App.xcarchive",

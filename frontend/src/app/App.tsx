@@ -69,10 +69,12 @@ function AppContent() {
 
   return (
     <div 
-      className="h-screen w-full bg-black flex flex-col overflow-hidden max-w-[480px] mx-auto"
+      className="h-screen w-full bg-black flex flex-col overflow-hidden"
       style={{
         height: '100dvh', // 动态视口高度，适配移动端
         minHeight: '-webkit-fill-available', // iOS Safari 支持
+        maxWidth: '480px',
+        margin: '0 auto',
       }}
     >
       {currentView === 'home' && <Home userEmail={user?.email} />}

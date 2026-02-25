@@ -422,9 +422,10 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
       {videos.map((video, index) => (
         <div
           key={video.id}
-            className="h-screen w-full snap-start snap-always flex-shrink-0 relative"
+            className="h-screen w-full snap-start snap-always flex-shrink-0 relative bg-black"
             style={{
               minHeight: '-webkit-fill-available', // iOS Safari 支持
+              paddingTop: 'env(safe-area-inset-top, 0px)',
             }}
         >
           <VideoCard
