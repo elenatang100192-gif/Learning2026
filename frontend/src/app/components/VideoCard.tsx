@@ -339,7 +339,7 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
             setTimeout(() => {
               if (videoRef.current && isActive) {
                 videoRef.current.load();
-              }
+    }
             }, 2000);
           }
         });
@@ -504,27 +504,27 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                   }
                 }, 2000 * (retryCount + 1)); // 递增延迟
               } else if (videoEl.networkState === 3) {
-                // networkState: 3 表示 NETWORK_NO_SOURCE，可能是 iOS 模拟器限制
+              // networkState: 3 表示 NETWORK_NO_SOURCE，可能是 iOS 模拟器限制
                 console.warn('⚠️ iOS 模拟器可能不支持此视频格式或存在网络限制');
                 console.warn('💡 建议：在真机上测试，或检查视频服务器配置');
                 setIsLoading(true); // 显示 loading
-                
-                // 尝试重新加载一次
-                setTimeout(() => {
-                  if (videoEl && isActive && videoEl.networkState === 3) {
-                    console.log('🔄 尝试重新加载视频...');
-                    videoEl.src = '';
-                    videoEl.load();
-                    setTimeout(() => {
-                      if (videoEl && isActive) {
-                        videoEl.src = currentVideoUrl;
-                        videoEl.load();
+              
+              // 尝试重新加载一次
+              setTimeout(() => {
+                if (videoEl && isActive && videoEl.networkState === 3) {
+                  console.log('🔄 尝试重新加载视频...');
+                  videoEl.src = '';
+                  videoEl.load();
+                  setTimeout(() => {
+                    if (videoEl && isActive) {
+                      videoEl.src = currentVideoUrl;
+                      videoEl.load();
                         setHasError(false);
                         setIsLoading(true); // 继续显示 loading
-                      }
-                    }, 500);
-                  }
-                }, 2000);
+                    }
+                  }, 500);
+                }
+              }, 2000);
               } else {
                 // 其他错误，不显示 loading（因为不会重试）
                 setIsLoading(false);
@@ -640,7 +640,7 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                   setIsLoading(true); // 继续显示 loading
                   if (retryCount < 3) {
                     setRetryCount(prev => prev + 1);
-                    videoRef.current.load();
+                  videoRef.current.load();
                   }
                 }
               }, 5000);
