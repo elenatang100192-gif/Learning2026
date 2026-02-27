@@ -28,10 +28,12 @@ interface VideoCardProps {
   isActive: boolean;
   showFollowButton?: boolean; // 是否显示关注按钮，默认false（home页面不显示）
   onProgressUpdate?: (progress: number) => void; // 进度更新回调
+  onSeek?: (time: number) => void; // 拖动进度条回调，传递目标时间（秒）
+  onDurationUpdate?: (duration: number) => void; // 视频时长更新回调
   hasUserInteracted?: boolean; // 用户是否已交互（用于决定是否可以自动播放声音）
 }
 
-export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
+export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, onSeek, onDurationUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
   const { t, language } = useLanguage();
   const [isPlaying, setIsPlaying] = useState(false);
   const [showControls, setShowControls] = useState(false); // 初始不显示播放按钮，登录后自动播放
@@ -196,13 +198,15 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                 setIsLoading(false); // 加载完成
                 setShowControls(false);
               }).catch(() => {
-                setHasError(true);
-                setIsLoading(true); // 继续显示 loading
-              });
-            };
+              setHasError(true);
+              setIsLoading(true); // 继续显示 loading
+            });
+          };
+          if (videoRef.current) {
             videoRef.current.addEventListener('canplay', onCanPlay, { once: true });
-          });
-        } else {
+          }
+        });
+      } else {
           // 如果视频还没加载，等待加载完成
           setIsLoading(true); // 开始加载
           const onCanPlay = () => {
@@ -430,12 +434,49 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
     }
   };
 
+  // 处理进度条拖动
+  const handleSeek = (targetTime: number) => {
+    if (!videoRef.current || !isActive) return;
+    
+    // 标记用户已交互
+    if (!hasUserInteracted) {
+      setHasUserInteracted(true);
+    }
+    
+    // 设置视频播放位置
+    videoRef.current.currentTime = targetTime;
+    
+    // 立即更新进度
+    const progress = (targetTime / videoRef.current.duration) * 100;
+    setProgress(progress);
+    if (onProgressUpdate) {
+      onProgressUpdate(progress);
+    }
+    
+    // 如果视频暂停中，拖动后继续播放
+    if (!isPlaying && videoRef.current.readyState >= 2) {
+      videoRef.current.muted = isMuted;
+      videoRef.current.play().then(() => {
+        setIsPlaying(true);
+        setShowControls(false);
+      }).catch((error) => {
+        console.error('拖动后播放失败:', error);
+      });
+    }
+    
+    // 通知父组件
+    if (onSeek) {
+      onSeek(targetTime);
+    }
+  };
+
   return (
     <div className="relative h-full w-full bg-black flex items-center justify-center" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
       {/* 视频 - 抖音风格：固定位置，自适应不同手机尺寸 */}
       <div className="absolute inset-0 w-full h-full" style={{ top: '-env(safe-area-inset-top, 0px)' }}>
         <video
           ref={videoRef}
+          data-video-id={video.id}
           className="w-full h-full object-cover bg-black"
           src={currentVideoUrl}
           poster={video.thumbnail}
@@ -591,6 +632,12 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
                 readyState: videoRef.current.readyState,
                 networkState: videoRef.current.networkState
               });
+              
+              // 通知父组件视频时长
+              if (onDurationUpdate && videoRef.current.duration) {
+                onDurationUpdate(videoRef.current.duration);
+              }
+              
               // 检查网络状态，如果是错误状态，设置错误标志并显示 loading
               if (videoRef.current.networkState === 2) {
                 console.error('⚠️ 视频元数据加载时检测到网络错误');
@@ -718,6 +765,148 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
         )}
       </button>
 
+    </div>
+  );
+}
+
+// 导出进度条组件供VideoFeed使用
+interface ProgressBarProps {
+  progress: number;
+  duration: number;
+  onSeek: (time: number) => void;
+  className?: string;
+}
+
+export function ProgressBar({ progress, duration, onSeek, className = '' }: ProgressBarProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragProgress, setDragProgress] = useState(progress);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+
+  // 当外部进度更新时，同步内部状态（仅在非拖动状态下）
+  useEffect(() => {
+    if (!isDragging) {
+      setDragProgress(progress);
+    }
+  }, [progress, isDragging]);
+
+  // 计算拖动位置
+  const calculateProgress = (clientX: number): number => {
+    if (!progressBarRef.current) return progress;
+    
+    const rect = progressBarRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
+    return (x / rect.width) * 100;
+  };
+
+  // 处理鼠标/触摸开始
+  const handleStart = (clientX: number) => {
+    setIsDragging(true);
+    const newProgress = calculateProgress(clientX);
+    setDragProgress(newProgress);
+  };
+
+  // 处理鼠标/触摸移动
+  const handleMove = (clientX: number) => {
+    if (!isDragging) return;
+    const newProgress = calculateProgress(clientX);
+    setDragProgress(newProgress);
+  };
+
+  // 处理鼠标/触摸结束
+  const handleEnd = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    
+    // 计算目标时间并触发回调
+    const targetTime = (dragProgress / 100) * duration;
+    onSeek(targetTime);
+  };
+
+  // 处理点击进度条
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newProgress = calculateProgress(e.clientX);
+    setDragProgress(newProgress);
+    const targetTime = (newProgress / 100) * duration;
+    onSeek(targetTime);
+  };
+
+  // 鼠标事件
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    handleStart(e.clientX);
+  };
+
+  const handleMouseMove = (e: MouseEvent) => {
+    handleMove(e.clientX);
+  };
+
+  const handleMouseUp = () => {
+    handleEnd();
+  };
+
+  // 触摸事件
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+    if (e.touches.length > 0) {
+      handleStart(e.touches[0].clientX);
+    }
+  };
+
+  const handleTouchMove = (e: TouchEvent) => {
+    if (e.touches.length > 0) {
+      handleMove(e.touches[0].clientX);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    handleEnd();
+  };
+
+  // 添加全局事件监听器
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleTouchMove);
+      document.addEventListener('touchend', handleTouchEnd);
+
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        document.removeEventListener('touchmove', handleTouchMove);
+        document.removeEventListener('touchend', handleTouchEnd);
+      };
+    }
+  }, [isDragging, dragProgress]);
+
+  const displayProgress = isDragging ? dragProgress : progress;
+
+  return (
+    <div
+      ref={progressBarRef}
+      className={`relative h-1 bg-white/30 rounded-full overflow-visible cursor-pointer group ${className}`}
+      onClick={handleClick}
+      onMouseDown={handleMouseDown}
+      onTouchStart={handleTouchStart}
+    >
+      {/* 进度条背景 */}
+      <div
+        className="absolute inset-0 h-full bg-white rounded-full transition-all"
+        style={{ width: `${displayProgress}%`, transitionDuration: isDragging ? '0ms' : '200ms' }}
+      />
+      
+      {/* 拖动手柄 - 在拖动或hover时显示 */}
+      <div
+        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg transition-opacity ${
+          isDragging ? 'opacity-100 scale-125' : 'opacity-0 group-hover:opacity-100'
+        }`}
+        style={{ 
+          left: `${displayProgress}%`, 
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none'
+        }}
+      />
     </div>
   );
 }

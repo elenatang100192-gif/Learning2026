@@ -2896,8 +2896,9 @@ ${textContent}
 
 // 步骤3: 生成视频（将无声视频与音频合并）
 // 生成字幕文件的辅助函数（使用腾讯云语音识别）
-// 字幕提前量（秒），让字幕提前出现以匹配音频
-const SUBTITLE_ADVANCE_TIME = 0.7; // 提前0.7秒，增加提前量以改善同步
+// 字幕提前量（秒）
+// 现在不再使用提前量，保持与音频时间完全一致
+const SUBTITLE_ADVANCE_TIME = 0;
 
 // 检查FFmpeg版本和subtitles滤镜支持情况
 async function checkFFmpegSubtitlesSupport() {
@@ -2947,6 +2948,21 @@ function escapeSubtitlePath(filePath) {
   console.log(`📝 字幕路径转义: 原始=${filePath}, 转义后=${escaped}`);
   
   return escaped;
+}
+
+// 根据语言生成字幕样式字符串
+// 英文字幕使用更大的字体和更好的可读性设置
+function getSubtitleStyle(language) {
+  if (language === 'en') {
+    // 英文字幕样式：与中文字幕相同的字体大小
+    // FontSize=8：字体大小8，与中文字幕一致
+    // MarginV=70：稍微上移，让字幕更居中
+    // MarginL=50, MarginR=110：左边距50px，右边距110px，可用宽度560px（720-50-110=560）
+    return 'FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginL=50,MarginR=110,MarginV=70,WrapStyle=2';
+  } else {
+    // 中文字幕样式：左边距50px，右边距110px，可用宽度560px（720-50-110=560）
+    return 'FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginL=50,MarginR=110,MarginV=80,WrapStyle=2';
+  }
 }
 
 async function generateSubtitleFile(audioUrl, language, tempDir, contentId, timestamp) {
@@ -3138,9 +3154,9 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
   }
 }
 
-// 智能换行函数：将长文本按行宽自动换行
-// 确保在服务器和本地环境都能正确换行显示
-function wrapSubtitleText(text, language, maxCharsPerLine = 20) {
+// 按语言智能换行函数：将长文本按行宽 / 单词数自动换行
+// 仅在生成 SRT 字幕时使用，保证中英文在不同环境下显示一致
+function wrapSubtitleTextByLanguage(text, language, maxCharsPerLine = 20) {
   if (!text || text.trim().length === 0) return '';
   
   // 根据语言调整每行最大字符数
@@ -3149,7 +3165,9 @@ function wrapSubtitleText(text, language, maxCharsPerLine = 20) {
   const maxLength = language === 'zh' ? maxCharsPerLine : Math.floor(maxCharsPerLine * 1.8);
   
   if (language === 'zh') {
-    // 中文换行：按字符数换行，避免在词中间断开
+    // 中文换行：强制按字符数换行，确保不超出屏幕边界
+    // 可用宽度560px，字体大小8，每行最多18个字符（留出余量）
+    const MAX_CHARS_PER_LINE = 18; // 强制限制，确保不超出边框
     const lines = [];
     let currentLine = '';
     
@@ -3157,11 +3175,15 @@ function wrapSubtitleText(text, language, maxCharsPerLine = 20) {
       const char = text[i];
       currentLine += char;
       
-      // 如果当前行达到最大长度，或遇到标点符号后的空格
-      if (currentLine.length >= maxLength) {
-        // 在标点符号后换行更自然
+      // 强制换行：达到最大长度时立即换行，不等待标点符号
+      if (currentLine.length >= MAX_CHARS_PER_LINE) {
+        // 优先在标点符号后换行，如果没有标点符号则强制换行
         const punctuationMatch = currentLine.match(/[，。！？、；：,\.!?;:]\s*$/);
-        if (punctuationMatch || currentLine.length >= maxLength + 3) {
+        if (punctuationMatch) {
+          lines.push(currentLine.trim());
+          currentLine = '';
+        } else {
+          // 强制换行，即使没有标点符号
           lines.push(currentLine.trim());
           currentLine = '';
         }
@@ -3175,28 +3197,56 @@ function wrapSubtitleText(text, language, maxCharsPerLine = 20) {
     
     return lines.join('\n');
   } else {
-    // 英文换行：保持单词完整性
-    const words = text.split(/\s+/);
+    // 英文换行：根据屏幕宽度智能换行，一行尽可能多展示单词，但不超过屏幕宽度
+    // 屏幕宽度720px，左边距50px，右边距110px，可用宽度560px（720-50-110=560）
+    // 字体大小8，每个字符约5-6px宽，保守估计每行最多45个字符，确保不超出屏幕
+    const words = text.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) return '';
+
+    // 每行最大字符数（包括空格），强制限制确保不超出屏幕宽度
+    // 考虑到字体大小8，每个字符平均宽度约5.5px，560px宽度可容纳约100个字符
+    // 为了确保右边距足够且不超出屏幕，设置为33个字符，留出充足余量
+    const MAX_CHARS_PER_LINE = 33; // 每行最多33个字符，确保不超出屏幕
+    const MAX_LINES = 3; // 单句最多 3 行，避免过高的"字幕柱"
+
     const lines = [];
     let currentLine = '';
     
-    for (const word of words) {
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      
+      // 计算添加这个单词后的长度（包括单词本身和前面的空格）
       const testLine = currentLine ? `${currentLine} ${word}` : word;
       
-      if (testLine.length > maxLength && currentLine) {
-        // 当前行已满，开始新行
-        lines.push(currentLine.trim());
-        currentLine = word;
-      } else {
+      // 如果添加这个单词后不超过最大长度，就添加
+      if (testLine.length <= MAX_CHARS_PER_LINE) {
         currentLine = testLine;
+      } else {
+        // 当前行已满，强制保存当前行并开始新行（保持单词整体，不在单词中间断开）
+        if (currentLine) {
+          lines.push(currentLine.trim());
+          currentLine = word;
+          
+          // 如果已经达到最大行数，将剩余单词都放在最后一行（即使可能超出）
+          if (lines.length >= MAX_LINES - 1) {
+            const remainingWords = words.slice(i + 1);
+            if (remainingWords.length > 0) {
+              currentLine = currentLine + ' ' + remainingWords.join(' ');
+            }
+            break;
+          }
+        } else {
+          // 如果当前行为空，直接添加单词（即使可能超出）
+          currentLine = word;
+        }
       }
     }
     
     // 添加最后一行
-    if (currentLine.trim()) {
+    if (currentLine) {
       lines.push(currentLine.trim());
     }
-    
+
     return lines.join('\n');
   }
 }
@@ -3261,8 +3311,8 @@ function convertParaformerResultToSRT(transcriptionText, language) {
               const startTimeStr = formatSRTTime(sentenceStartTime);
               const endTimeStr = formatSRTTime(sentenceEndTime);
               
-              // 应用智能换行
-              const wrappedText = wrapSubtitleText(currentSentence.trim(), language);
+              // 应用按语言的智能换行
+              const wrappedText = wrapSubtitleTextByLanguage(currentSentence.trim(), language);
               srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
               index++;
             }
@@ -3277,8 +3327,8 @@ function convertParaformerResultToSRT(transcriptionText, language) {
           const startTimeStr = formatSRTTime(sentenceStartTime);
           const endTimeStr = formatSRTTime(sentenceEndTime || sentenceStartTime + 3);
           
-          // 应用智能换行
-          const wrappedText = wrapSubtitleText(currentSentence.trim(), language);
+          // 应用按语言的智能换行
+          const wrappedText = wrapSubtitleTextByLanguage(currentSentence.trim(), language);
           srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
         }
       } else {
@@ -3378,8 +3428,8 @@ function convertParaformerResultToSRT(transcriptionText, language) {
           const sentenceStartTimeStr = formatSRTTime(sentenceStartTime);
           const sentenceEndTimeStr = formatSRTTime(sentenceEndTime);
           
-          // 应用智能换行
-          const wrappedText = wrapSubtitleText(sentence, language);
+          // 应用按语言的智能换行
+          const wrappedText = wrapSubtitleTextByLanguage(sentence, language);
           srtContent += `${index}\n${sentenceStartTimeStr} --> ${sentenceEndTimeStr}\n${wrappedText}\n\n`;
           index++;
           
@@ -3412,8 +3462,8 @@ function convertParaformerResultToSRT(transcriptionText, language) {
         const startTimeStr = formatSRTTime(startTime);
         const endTimeStr = formatSRTTime(endTime);
         
-        // 应用智能换行
-        const wrappedText = wrapSubtitleText(sentence.text.trim(), language);
+        // 应用按语言的智能换行
+        const wrappedText = wrapSubtitleTextByLanguage(sentence.text.trim(), language);
         srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
         index++;
       }
@@ -3645,7 +3695,8 @@ function convertAsrResultToSRT(resultText) {
           
           srtContent += `${index}\n`;
           srtContent += `${formatSRTTime(block.startTime)} --> ${formatSRTTime(endTime)}\n`;
-          srtContent += `${wrapSubtitleText(block.text)}\n\n`;
+          // 使用按语言的智能换行，确保英文可读性更好
+          srtContent += `${wrapSubtitleTextByLanguage(block.text, language)}\n\n`;
           index++;
         }
       } else if (parsedData.sentences && Array.isArray(parsedData.sentences)) {
@@ -3673,7 +3724,7 @@ function convertAsrResultToSRT(resultText) {
           
           srtContent += `${index}\n`;
           srtContent += `${formatSRTTime(startTime)} --> ${formatSRTTime(endTime)}\n`;
-          srtContent += `${wrapSubtitleText(text)}\n\n`;
+          srtContent += `${wrapSubtitleTextByLanguage(text, language)}\n\n`;
           index++;
         }
       }
@@ -4780,13 +4831,13 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
             // Shadow=0：无阴影效果
             // OutlineColour=&H606060：深灰色描边
             // Alignment=5：画面正中心（锚点在正中心）
-            // WrapStyle=0：智能换行，长文本自动换行不超出屏幕（更激进的换行策略）
+            // WrapStyle=2：不自动换行，严格按照SRT中的换行符（我们在生成SRT时已做智能换行）
             // MarginL=50,MarginR=50：左右边距50像素，确保字幕不超出屏幕边界（720宽度，可用620）
             // MarginV=80：垂直边距80像素，让字幕从中心往下移动，位置固定不变
             // 注意：force_style参数值使用单引号包裹，内部不需要转义（FFmpeg会自动处理）
             // FontSize=8：字体大小8
             // OutlineColour=&H606060：深灰色描边
-            `[v]subtitles='${escapedSubtitlePath}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginL=50,MarginR=50,MarginV=80,WrapStyle=0'[outv]`
+            `[v]subtitles='${escapedSubtitlePath}':charenc=UTF-8:force_style='${getSubtitleStyle(language)}'[outv]`
           ])
           .outputOptions([
             '-map', '[outv]',
@@ -4875,7 +4926,7 @@ router.post('/content/:contentId/generate-video', async (req, res) => {
             fallbackProcess = fallbackProcess
               .complexFilter([
                 `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
-                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
+                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='${getSubtitleStyle(language)}'[outv]`
               ])
               .outputOptions([
                 '-map', '[outv]',
@@ -6957,13 +7008,13 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
             // Shadow=0：无阴影效果
             // OutlineColour=&H606060：深灰色描边
             // Alignment=5：画面正中心（锚点在正中心）
-            // WrapStyle=0：智能换行，长文本自动换行不超出屏幕（更激进的换行策略）
+            // WrapStyle=2：不自动换行，严格按照SRT中的换行符（我们在生成SRT时已做智能换行）
             // MarginL=50,MarginR=50：左右边距50像素，确保字幕不超出屏幕边界（720宽度，可用620）
             // MarginV=80：垂直边距80像素，让字幕从中心往下移动，位置固定不变
             // 注意：force_style参数值使用单引号包裹，内部不需要转义（FFmpeg会自动处理）
             // FontSize=8：字体大小8
             // OutlineColour=&H606060：深灰色描边
-            `[v]subtitles='${escapedSubtitlePath}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginL=50,MarginR=50,MarginV=80,WrapStyle=0'[outv]`
+            `[v]subtitles='${escapedSubtitlePath}':charenc=UTF-8:force_style='${getSubtitleStyle(language)}'[outv]`
           ])
           .outputOptions([
             '-map', '[outv]',
@@ -7051,7 +7102,7 @@ router.post('/content/:contentId/generate-english-video', async (req, res) => {
             fallbackProcess = fallbackProcess
               .complexFilter([
                 `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[v]`,
-                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='FontSize=8,PrimaryColour=&Hffffff,OutlineColour=&H606060,Outline=1,Shadow=0,Alignment=5,MarginV=80,MarginL=50,MarginR=50,WrapStyle=0'[outv]`
+                `[v]subtitles='${escapeSubtitlePath(tempSubtitlePath)}':charenc=UTF-8:force_style='${getSubtitleStyle(language)}'[outv]`
               ])
               .outputOptions([
                 '-map', '[outv]',

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { VideoCard } from './VideoCard';
+import { VideoCard, ProgressBar } from './VideoCard';
 import { VideoInteractions } from './VideoInteractions';
 import { NotificationBell } from './NotificationBell';
 import { videoAPI, categoryAPI, likeAPI, favoriteAPI, commentAPI, followAPI, type Video as LeanCloudVideo } from '../services/leancloud';
@@ -39,8 +39,10 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
   const [videos, setVideos] = useState<FrontendVideo[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentProgress, setCurrentProgress] = useState(0); // 当前视频的进度
+  const [videoDuration, setVideoDuration] = useState(0); // 当前视频的总时长（秒）
   const [isFollowing, setIsFollowing] = useState(false); // 当前视频的关注状态
   const [hasUserInteracted, setHasUserInteracted] = useState(false); // 跟踪用户是否已交互
+  const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({}); // 存储视频元素引用
 
   // 当 currentIndex 变化时，更新关注状态和进度
   useEffect(() => {
@@ -409,6 +411,21 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
     }
   };
 
+  // 处理进度条拖动
+  const handleSeek = (targetTime: number) => {
+    if (!currentVideo) return;
+    
+    // 获取当前视频的DOM元素
+    const videoElement = document.querySelector(`video[data-video-id="${currentVideo.id}"]`) as HTMLVideoElement;
+    if (videoElement) {
+      videoElement.currentTime = targetTime;
+      
+      // 立即更新进度显示
+      const progress = (targetTime / videoElement.duration) * 100;
+      setCurrentProgress(progress);
+    }
+  };
+
   return (
     <>
     <div
@@ -432,7 +449,9 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
             video={video}
             isActive={index === currentIndex}
             showFollowButton={showFollowButton}
-              onProgressUpdate={index === currentIndex ? setCurrentProgress : undefined}
+            onProgressUpdate={index === currentIndex ? setCurrentProgress : undefined}
+            onSeek={index === currentIndex ? handleSeek : undefined}
+            onDurationUpdate={index === currentIndex ? setVideoDuration : undefined}
             hasUserInteracted={hasUserInteracted}
           />
         </div>
@@ -463,19 +482,19 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
             />
           </div>
 
-          {/* 进度条 */}
+          {/* 进度条 - 使用可拖动的ProgressBar组件 */}
           <div 
-            className="fixed left-0 right-0 z-10 px-4 pointer-events-none max-w-[480px] mx-auto"
+            className="fixed left-0 right-0 z-10 px-4 max-w-[480px] mx-auto"
             style={{
               bottom: 'calc(64px + env(safe-area-inset-bottom, 0px))',
+              pointerEvents: 'auto', // 启用交互
             }}
           >
-            <div className="h-0.5 bg-white/30 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white rounded-full transition-all duration-200"
-                style={{ width: `${currentProgress}%` }}
-              />
-            </div>
+            <ProgressBar
+              progress={currentProgress}
+              duration={videoDuration}
+              onSeek={handleSeek}
+            />
           </div>
 
           {/* 作者信息和视频标题 */}
