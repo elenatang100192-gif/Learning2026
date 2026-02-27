@@ -3138,6 +3138,69 @@ async function generateSubtitleFile(audioUrl, language, tempDir, contentId, time
   }
 }
 
+// 智能换行函数：将长文本按行宽自动换行
+// 确保在服务器和本地环境都能正确换行显示
+function wrapSubtitleText(text, language, maxCharsPerLine = 20) {
+  if (!text || text.trim().length === 0) return '';
+  
+  // 根据语言调整每行最大字符数
+  // 中文：每个字符占用较多空间，建议15-20字/行
+  // 英文：每个单词需要保持完整，建议30-40字符/行
+  const maxLength = language === 'zh' ? maxCharsPerLine : Math.floor(maxCharsPerLine * 1.8);
+  
+  if (language === 'zh') {
+    // 中文换行：按字符数换行，避免在词中间断开
+    const lines = [];
+    let currentLine = '';
+    
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      currentLine += char;
+      
+      // 如果当前行达到最大长度，或遇到标点符号后的空格
+      if (currentLine.length >= maxLength) {
+        // 在标点符号后换行更自然
+        const punctuationMatch = currentLine.match(/[，。！？、；：,\.!?;:]\s*$/);
+        if (punctuationMatch || currentLine.length >= maxLength + 3) {
+          lines.push(currentLine.trim());
+          currentLine = '';
+        }
+      }
+    }
+    
+    // 添加最后一行
+    if (currentLine.trim()) {
+      lines.push(currentLine.trim());
+    }
+    
+    return lines.join('\n');
+  } else {
+    // 英文换行：保持单词完整性
+    const words = text.split(/\s+/);
+    const lines = [];
+    let currentLine = '';
+    
+    for (const word of words) {
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      
+      if (testLine.length > maxLength && currentLine) {
+        // 当前行已满，开始新行
+        lines.push(currentLine.trim());
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    
+    // 添加最后一行
+    if (currentLine.trim()) {
+      lines.push(currentLine.trim());
+    }
+    
+    return lines.join('\n');
+  }
+}
+
 // 将阿里云DashScope Paraformer识别结果转换为SRT格式
 function convertParaformerResultToSRT(transcriptionText, language) {
   // Paraformer返回的transcription可能是：
@@ -3198,7 +3261,9 @@ function convertParaformerResultToSRT(transcriptionText, language) {
               const startTimeStr = formatSRTTime(sentenceStartTime);
               const endTimeStr = formatSRTTime(sentenceEndTime);
               
-              srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+              // 应用智能换行
+              const wrappedText = wrapSubtitleText(currentSentence.trim(), language);
+              srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
               index++;
             }
             currentSentence = '';
@@ -3212,7 +3277,9 @@ function convertParaformerResultToSRT(transcriptionText, language) {
           const startTimeStr = formatSRTTime(sentenceStartTime);
           const endTimeStr = formatSRTTime(sentenceEndTime || sentenceStartTime + 3);
           
-          srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${currentSentence.trim()}\n\n`;
+          // 应用智能换行
+          const wrappedText = wrapSubtitleText(currentSentence.trim(), language);
+          srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
         }
       } else {
         // 如果没有精确的时间戳，使用音频总时长按比例分配
@@ -3311,7 +3378,9 @@ function convertParaformerResultToSRT(transcriptionText, language) {
           const sentenceStartTimeStr = formatSRTTime(sentenceStartTime);
           const sentenceEndTimeStr = formatSRTTime(sentenceEndTime);
           
-          srtContent += `${index}\n${sentenceStartTimeStr} --> ${sentenceEndTimeStr}\n${sentence}\n\n`;
+          // 应用智能换行
+          const wrappedText = wrapSubtitleText(sentence, language);
+          srtContent += `${index}\n${sentenceStartTimeStr} --> ${sentenceEndTimeStr}\n${wrappedText}\n\n`;
           index++;
           
           // 更新currentTime，不使用提前量
@@ -3343,7 +3412,9 @@ function convertParaformerResultToSRT(transcriptionText, language) {
         const startTimeStr = formatSRTTime(startTime);
         const endTimeStr = formatSRTTime(endTime);
         
-        srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${sentence.text.trim()}\n\n`;
+        // 应用智能换行
+        const wrappedText = wrapSubtitleText(sentence.text.trim(), language);
+        srtContent += `${index}\n${startTimeStr} --> ${endTimeStr}\n${wrappedText}\n\n`;
         index++;
       }
     } else if (parsedData && parsedData.words && Array.isArray(parsedData.words)) {
