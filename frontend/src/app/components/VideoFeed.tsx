@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { VideoCard, ProgressBar } from './VideoCard';
 import { VideoInteractions } from './VideoInteractions';
 import { NotificationBell } from './NotificationBell';
@@ -30,9 +30,11 @@ interface FrontendVideo {
 interface VideoFeedProps {
   category: 'Tech' | 'Culture' | 'Business';
   showFollowButton?: boolean; // 是否显示关注按钮
+  playVideoId?: string | null; // 要播放的视频ID
+  onVideoPlayed?: () => void; // 视频播放后的回调
 }
 
-export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps) {
+export function VideoFeed({ category, showFollowButton = false, playVideoId, onVideoPlayed }: VideoFeedProps) {
   const { language } = useLanguage();
   const [currentIndex, setCurrentIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -40,9 +42,11 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
   const [loading, setLoading] = useState(true);
   const [currentProgress, setCurrentProgress] = useState(0); // 当前视频的进度
   const [videoDuration, setVideoDuration] = useState(0); // 当前视频的总时长（秒）
+  const [currentVideoTime, setCurrentVideoTime] = useState(0); // 当前视频的播放时间（秒）
   const [isFollowing, setIsFollowing] = useState(false); // 当前视频的关注状态
   const [hasUserInteracted, setHasUserInteracted] = useState(false); // 跟踪用户是否已交互
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({}); // 存储视频元素引用
+  const skipTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 用于延迟跳过，避免频繁触发
 
   // 当 currentIndex 变化时，更新关注状态和进度
   useEffect(() => {
@@ -50,8 +54,29 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
       const currentVideo = videos[currentIndex];
       setIsFollowing(currentVideo.isFollowing);
       setCurrentProgress(0); // 切换视频时重置进度
+      setVideoDuration(0); // 切换视频时重置时长，等待新视频加载
+      setCurrentVideoTime(0); // 切换视频时重置播放时间
     }
   }, [currentIndex, videos]);
+
+  // 监听 playVideoId 变化，跳转到指定视频
+  useEffect(() => {
+    if (playVideoId && videos.length > 0 && containerRef.current) {
+      const targetIndex = videos.findIndex(v => v.id === playVideoId);
+      if (targetIndex >= 0 && targetIndex !== currentIndex) {
+        setCurrentIndex(targetIndex);
+        // 滚动到目标视频
+        const targetElement = containerRef.current.children[targetIndex] as HTMLElement;
+        if (targetElement) {
+          targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        // 通知视频已播放
+        if (onVideoPlayed) {
+          setTimeout(() => onVideoPlayed(), 500);
+        }
+      }
+    }
+  }, [playVideoId, videos, currentIndex, onVideoPlayed]);
 
   // 将LeanCloud数据转换为前端格式
   const convertToFrontendVideo = async (leanCloudVideo: LeanCloudVideo): Promise<FrontendVideo> => {
@@ -258,13 +283,40 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
         // 延迟重置索引和滚动，确保新视频已渲染
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            setCurrentIndex(0);
-            // 确保滚动到顶部（使用 instant 避免滚动动画导致的黑屏）
-            if (containerRef.current) {
-              containerRef.current.scrollTo({
-                top: 0,
-                behavior: 'instant', // 使用 instant 避免滚动过程中的黑屏
-              });
+            // 如果指定了要播放的视频ID，找到它并跳转
+            if (playVideoId) {
+              const targetIndex = finalVideos.findIndex(v => v.id === playVideoId);
+              if (targetIndex >= 0) {
+                setCurrentIndex(targetIndex);
+                // 滚动到目标视频
+                if (containerRef.current) {
+                  const targetElement = containerRef.current.children[targetIndex] as HTMLElement;
+                  if (targetElement) {
+                    targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }
+                }
+                // 通知视频已播放
+                if (onVideoPlayed) {
+                  setTimeout(() => onVideoPlayed(), 500);
+                }
+              } else {
+                setCurrentIndex(0);
+                if (containerRef.current) {
+                  containerRef.current.scrollTo({
+                    top: 0,
+                    behavior: 'instant',
+                  });
+                }
+              }
+            } else {
+              setCurrentIndex(0);
+              // 确保滚动到顶部（使用 instant 避免滚动动画导致的黑屏）
+              if (containerRef.current) {
+                containerRef.current.scrollTo({
+                  top: 0,
+                  behavior: 'instant', // 使用 instant 避免滚动过程中的黑屏
+                });
+              }
             }
           });
         });
@@ -304,7 +356,35 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
               
               // 如果索引变化，立即更新
               if (newIndex !== currentIndex && newIndex >= 0 && newIndex < videos.length) {
-                setCurrentIndex(newIndex);
+                // 如果是向下滚动（newIndex > currentIndex），检查当前视频是否已播放完成
+                const isVideoFinished = videoDuration > 0 && currentVideoTime >= videoDuration - 0.5; // 留0.5秒容差
+                if (newIndex > currentIndex && isVideoFinished) {
+                  // 如果视频已播放完成，自动跳过到下一个视频
+                  // 清除之前的跳过定时器
+                  if (skipTimeoutRef.current) {
+                    clearTimeout(skipTimeoutRef.current);
+                  }
+                  
+                  // 延迟跳过，确保滚动动画完成
+                  skipTimeoutRef.current = setTimeout(() => {
+                    if (newIndex < videos.length - 1) {
+                      // 继续滚动到下一个视频
+                      const nextIndex = newIndex + 1;
+                      const nextElement = container.children[nextIndex] as HTMLElement;
+                      if (nextElement) {
+                        nextElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        console.log(`⏭️ 自动跳过已完成的视频: ${nextIndex}, 视频标题: ${videos[nextIndex]?.title || '未知'}`);
+                        setCurrentIndex(nextIndex);
+                      }
+                    } else {
+                      // 已经是最后一个视频，正常切换
+                      setCurrentIndex(newIndex);
+                    }
+                  }, 300);
+                } else {
+                  // 正常切换视频
+                  setCurrentIndex(newIndex);
+                }
                 
                 // 强制暂停所有非激活的视频
                 const allVideos = container.querySelectorAll('video');
@@ -367,9 +447,38 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
         });
         
         if (closestIndex !== currentIndex && closestIndex >= 0 && closestIndex < videos.length) {
-          console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
-          setCurrentIndex(closestIndex);
-    }
+          // 如果是向下滚动（closestIndex > currentIndex），检查当前视频是否已播放完成
+          const isVideoFinished = videoDuration > 0 && currentVideoTime >= videoDuration - 0.5; // 留0.5秒容差
+          if (closestIndex > currentIndex && isVideoFinished) {
+            // 如果视频已播放完成，自动跳过到下一个视频
+            // 清除之前的跳过定时器
+            if (skipTimeoutRef.current) {
+              clearTimeout(skipTimeoutRef.current);
+            }
+            
+            // 延迟跳过，确保滚动动画完成
+            skipTimeoutRef.current = setTimeout(() => {
+              if (closestIndex < videos.length - 1) {
+                // 继续滚动到下一个视频
+                const nextIndex = closestIndex + 1;
+                const nextElement = container.children[nextIndex] as HTMLElement;
+                if (nextElement) {
+                  nextElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  console.log(`⏭️ 自动跳过已完成的视频: ${nextIndex}, 视频标题: ${videos[nextIndex]?.title || '未知'}`);
+                  setCurrentIndex(nextIndex);
+                }
+              } else {
+                // 已经是最后一个视频，正常切换
+                console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
+                setCurrentIndex(closestIndex);
+              }
+            }, 300);
+          } else {
+            // 正常切换视频
+            console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
+            setCurrentIndex(closestIndex);
+          }
+        }
       }, 100);
   };
 
@@ -380,8 +489,11 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
       observers.forEach(observer => observer.disconnect());
       container.removeEventListener('scroll', handleScroll);
       clearTimeout(scrollTimeout);
+      if (skipTimeoutRef.current) {
+        clearTimeout(skipTimeoutRef.current);
+      }
     };
-  }, [currentIndex, videos.length, hasUserInteracted, videos]);
+  }, [currentIndex, videos.length, hasUserInteracted, videos, currentVideoTime, videoDuration]);
 
   // 切换分类时重置索引和滚动位置（优化：避免黑屏）
   // 注意：这个逻辑已经在 loadVideos 中处理，这里移除避免重复执行
@@ -412,19 +524,33 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
   };
 
   // 处理进度条拖动
-  const handleSeek = (targetTime: number) => {
+  const handleSeek = useCallback((targetTime: number) => {
     if (!currentVideo) return;
+    
+    // 确保时间在有效范围内
+    if (targetTime < 0) targetTime = 0;
+    if (videoDuration > 0 && targetTime > videoDuration) {
+      targetTime = videoDuration;
+    }
     
     // 获取当前视频的DOM元素
     const videoElement = document.querySelector(`video[data-video-id="${currentVideo.id}"]`) as HTMLVideoElement;
-    if (videoElement) {
+    if (videoElement && videoElement.duration > 0) {
+      // 设置视频播放位置
       videoElement.currentTime = targetTime;
       
       // 立即更新进度显示
       const progress = (targetTime / videoElement.duration) * 100;
       setCurrentProgress(progress);
+      
+      // 如果视频暂停中，拖动后继续播放
+      if (videoElement.paused && videoElement.readyState >= 2) {
+        videoElement.play().catch((error) => {
+          console.error('拖动后播放失败:', error);
+        });
+      }
     }
-  };
+  }, [currentVideo, videoDuration]);
 
   return (
     <>
@@ -450,6 +576,7 @@ export function VideoFeed({ category, showFollowButton = false }: VideoFeedProps
             isActive={index === currentIndex}
             showFollowButton={showFollowButton}
             onProgressUpdate={index === currentIndex ? setCurrentProgress : undefined}
+            onTimeUpdate={index === currentIndex ? setCurrentVideoTime : undefined}
             onSeek={index === currentIndex ? handleSeek : undefined}
             onDurationUpdate={index === currentIndex ? setVideoDuration : undefined}
             hasUserInteracted={hasUserInteracted}

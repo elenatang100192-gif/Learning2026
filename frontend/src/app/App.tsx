@@ -3,7 +3,7 @@ import { Home } from './components/Home';
 import { Profile } from './components/Profile';
 import { LoginScreen } from './components/LoginScreen';
 import { PublishScreen } from './components/PublishScreen';
-import { MyPublications } from './components/MyPublications';
+import { MyFavorites } from './components/MyFavorites';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { useLanguage } from './contexts/LanguageContext';
 import { authAPI } from './services/leancloud';
@@ -11,9 +11,9 @@ import { authAPI } from './services/leancloud';
 function AppContent() {
   const { t, language } = useLanguage();
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'profile' | 'publish' | 'publications'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'profile' | 'publish' | 'favorites'>('home');
   const [user, setUser] = useState<{ email: string; username?: string; canPublish?: boolean; canComment?: boolean } | null>(null);
-  const [publicationsRefreshTrigger, setPublicationsRefreshTrigger] = useState(0);
+  const [playVideoId, setPlayVideoId] = useState<string | null>(null); // 要播放的视频ID
 
   // 检查用户登录状态
   useEffect(() => {
@@ -77,14 +77,13 @@ function AppContent() {
         margin: '0 auto',
       }}
     >
-      {currentView === 'home' && <Home userEmail={user?.email} />}
+      {currentView === 'home' && <Home userEmail={user?.email} playVideoId={playVideoId} onVideoPlayed={() => setPlayVideoId(null)} />}
       {currentView === 'profile' && (
         <Profile 
           user={user} 
           onLogout={handleLogout}
-          onNavigateToPublications={() => {
-            setPublicationsRefreshTrigger(Date.now());
-            setCurrentView('publications');
+          onNavigateToFavorites={() => {
+            setCurrentView('favorites');
           }}
         />
       )}
@@ -93,19 +92,12 @@ function AppContent() {
           user={user} 
           onClose={() => setCurrentView('home')}
           onNavigateToHome={() => setCurrentView('home')}
-          onNavigateToPublications={() => {
-        setPublicationsRefreshTrigger(Date.now());
-        setCurrentView('publications');
-          }}
         />
       )}
-      {currentView === 'publications' && (
-        <MyPublications
-          key={`publications-${publicationsRefreshTrigger}`}
+      {currentView === 'favorites' && (
+        <MyFavorites
           user={user}
           onBack={() => setCurrentView('profile')}
-          refreshTrigger={publicationsRefreshTrigger}
-          initialTab="pending"
         />
       )}
       

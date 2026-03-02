@@ -185,7 +185,8 @@ router.get('/', [
     }
 
     const sql = `
-      SELECT f.*, v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
+      SELECT f.id as favorite_id, f.userId as favorite_userId, f.videoId as favorite_videoId, f.createdAt as favorite_createdAt,
+             v.*, c.name as category_name, c.nameCn as category_nameCn, c.sortOrder as category_sortOrder,
              u.id as author_id, u.username as author_username, u.email as author_email, u.createdAt as author_createdAt,
              u.canPublish as author_canPublish, u.canComment as author_canComment
       FROM Favorite f
@@ -222,6 +223,7 @@ router.get('/', [
       likeCount: fav.likeCount || 0,
       uploadDate: fav.createdAt ? new Date(fav.createdAt).toISOString().split('T')[0] : null,
       publishDate: fav.publishDate,
+      favoriteCreatedAt: fav.favorite_createdAt ? new Date(fav.favorite_createdAt).toISOString() : null, // 收藏时间
       author: fav.author_id ? {
         id: fav.author_id,
         username: fav.author_username,

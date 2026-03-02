@@ -74,9 +74,9 @@ export function VideoInteractions({ video, onVideoUpdate }: VideoInteractionsPro
       }
 
       if (result.liked) {
-        toast.success(language === 'zh' ? '已点赞' : 'Liked');
+        toast.success(language === 'zh' ? '已点赞' : 'Liked', { duration: 500 });
       } else {
-        toast.success(language === 'zh' ? '已取消点赞' : 'Unliked');
+        toast.success(language === 'zh' ? '已取消点赞' : 'Unliked', { duration: 500 });
       }
     } catch (error) {
       console.error('点赞失败:', error);
@@ -94,16 +94,16 @@ export function VideoInteractions({ video, onVideoUpdate }: VideoInteractionsPro
       }
 
       if (favorited) {
-        toast.success('已收藏');
+        toast.success(language === 'zh' ? '已收藏' : 'Saved', { duration: 500 });
       } else {
-        toast.success('已取消收藏');
+        toast.success(language === 'zh' ? '已取消收藏' : 'Unsaved', { duration: 500 });
       }
       
       // 触发自定义事件，通知Profile组件刷新统计数据
       window.dispatchEvent(new CustomEvent('favoriteUpdated'));
     } catch (error) {
       console.error('收藏失败:', error);
-      toast.error('收藏失败，请重试');
+      toast.error(language === 'zh' ? '收藏失败，请重试' : 'Failed to save, please try again');
     }
   };
 
@@ -147,35 +147,28 @@ export function VideoInteractions({ video, onVideoUpdate }: VideoInteractionsPro
           <span className="text-white text-xs font-semibold">{formatCount(likes)}</span>
         </button>
 
-        {/* 评论 - 缩小按钮 */}
-        <button
-          onClick={() => {
-            if (canComment) {
+        {/* 评论 - 缩小按钮（仅在有评论权限时显示） */}
+        {canComment && (
+          <button
+            onClick={() => {
               setShowComments(true);
-            } else {
-              toast.error(language === 'zh' ? '您没有评论权限' : 'You do not have permission to comment');
-            }
-          }}
-          disabled={!canComment}
-          className={`flex flex-col items-center gap-1 transition-transform ${
-            canComment ? 'active:scale-95 cursor-pointer' : 'opacity-50 cursor-not-allowed'
-          }`}
-        >
-          <div className={`w-11 h-11 rounded-full backdrop-blur-md flex items-center justify-center ${
-            canComment ? 'bg-black/30' : 'bg-black/20'
-          }`}>
-            <svg className={`w-6 h-6 ${canComment ? 'text-white' : 'text-zinc-500'}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-          </div>
-          <span className={`text-xs font-semibold ${canComment ? 'text-white' : 'text-zinc-500'}`}>
-            {formatCount(commentCount)}
-          </span>
-        </button>
+            }}
+            className="flex flex-col items-center gap-1 transition-transform active:scale-95 cursor-pointer"
+          >
+            <div className="w-11 h-11 rounded-full backdrop-blur-md flex items-center justify-center bg-black/30">
+              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                />
+              </svg>
+            </div>
+            <span className="text-xs font-semibold text-white">
+              {formatCount(commentCount)}
+            </span>
+          </button>
+        )}
 
         {/* 收藏 - 缩小按钮，增强可见性 */}
         <button

@@ -151,7 +151,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
       if (user) {
         setLanguage(selectedLanguage);
         localStorage.setItem('preferredLanguage', selectedLanguage);
-          toast.success(displayT.loginSuccess || 'Login successful!');
+          toast.success(displayT.loginSuccess || 'Login successful!', { duration: 500 });
         onLogin(user.email);
       } else {
           setError(displayT.loginError || 'Login failed, please check your code');
@@ -181,7 +181,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           console.log('✅ Password login successful');
           setLanguage(selectedLanguage);
           localStorage.setItem('preferredLanguage', selectedLanguage);
-          toast.success(displayT.loginSuccess || 'Login successful!');
+          toast.success(displayT.loginSuccess || 'Login successful!', { duration: 500 });
           onLogin(user.email);
         } else {
           console.error('❌ Password login failed: user is null');

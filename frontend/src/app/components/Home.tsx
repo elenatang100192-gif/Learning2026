@@ -7,9 +7,11 @@ type Category = 'Tech' | 'Culture' | 'Business';
 
 interface HomeProps {
   userEmail?: string | null;
+  playVideoId?: string | null; // 要播放的视频ID
+  onVideoPlayed?: () => void; // 视频播放后的回调
 }
 
-export function Home({ userEmail }: HomeProps = {}) {
+export function Home({ userEmail, playVideoId, onVideoPlayed }: HomeProps = {}) {
   const { t } = useLanguage();
   const [activeCategory, setActiveCategory] = useState<Category>('Tech');
   const [showNotifications, setShowNotifications] = useState(false);
@@ -73,7 +75,7 @@ export function Home({ userEmail }: HomeProps = {}) {
       <div className="h-16 flex-shrink-0" />
 
       {/* 视频内容区 */}
-      <VideoFeed category={activeCategory} />
+      <VideoFeed category={activeCategory} playVideoId={playVideoId} onVideoPlayed={onVideoPlayed} />
 
       {/* 通知中心 */}
       <NotificationCenter

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { VideoInteractions } from './VideoInteractions';
 import { useLanguage } from '../contexts/LanguageContext';
 import { videoAPI, followAPI } from '../services/leancloud';
@@ -28,12 +28,13 @@ interface VideoCardProps {
   isActive: boolean;
   showFollowButton?: boolean; // 是否显示关注按钮，默认false（home页面不显示）
   onProgressUpdate?: (progress: number) => void; // 进度更新回调
+  onTimeUpdate?: (time: number) => void; // 播放时间更新回调，传递当前播放时间（秒）
   onSeek?: (time: number) => void; // 拖动进度条回调，传递目标时间（秒）
   onDurationUpdate?: (duration: number) => void; // 视频时长更新回调
   hasUserInteracted?: boolean; // 用户是否已交互（用于决定是否可以自动播放声音）
 }
 
-export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, onSeek, onDurationUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
+export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, onTimeUpdate, onSeek, onDurationUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
   const { t, language } = useLanguage();
   const [isPlaying, setIsPlaying] = useState(false);
   const [showControls, setShowControls] = useState(false); // 初始不显示播放按钮，登录后自动播放
@@ -364,6 +365,10 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
     // 通知父组件进度更新
     if (onProgressUpdate && isActive) {
       onProgressUpdate(progress);
+    }
+    // 通知父组件播放时间更新
+    if (onTimeUpdate && isActive) {
+      onTimeUpdate(videoRef.current.currentTime);
     }
   };
 
@@ -781,111 +786,123 @@ export function ProgressBar({ progress, duration, onSeek, className = '' }: Prog
   const [isDragging, setIsDragging] = useState(false);
   const [dragProgress, setDragProgress] = useState(progress);
   const progressBarRef = useRef<HTMLDivElement>(null);
+  const dragProgressRef = useRef(progress); // 使用 ref 存储拖动进度，避免依赖问题
 
   // 当外部进度更新时，同步内部状态（仅在非拖动状态下）
   useEffect(() => {
     if (!isDragging) {
       setDragProgress(progress);
+      dragProgressRef.current = progress;
     }
   }, [progress, isDragging]);
 
   // 计算拖动位置
-  const calculateProgress = (clientX: number): number => {
+  const calculateProgress = useCallback((clientX: number): number => {
     if (!progressBarRef.current) return progress;
     
     const rect = progressBarRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(clientX - rect.left, rect.width));
     return (x / rect.width) * 100;
-  };
+  }, [progress]);
 
   // 处理鼠标/触摸开始
-  const handleStart = (clientX: number) => {
+  const handleStart = useCallback((clientX: number) => {
     setIsDragging(true);
     const newProgress = calculateProgress(clientX);
     setDragProgress(newProgress);
-  };
+    dragProgressRef.current = newProgress;
+  }, [calculateProgress]);
 
   // 处理鼠标/触摸移动
-  const handleMove = (clientX: number) => {
-    if (!isDragging) return;
+  const handleMove = useCallback((clientX: number) => {
     const newProgress = calculateProgress(clientX);
     setDragProgress(newProgress);
-  };
+    dragProgressRef.current = newProgress;
+  }, [calculateProgress]);
 
   // 处理鼠标/触摸结束
-  const handleEnd = () => {
-    if (!isDragging) return;
+  const handleEnd = useCallback(() => {
+    // 使用 ref 中的最新值
+    const finalProgress = dragProgressRef.current;
     setIsDragging(false);
     
-    // 计算目标时间并触发回调
-    const targetTime = (dragProgress / 100) * duration;
-    onSeek(targetTime);
-  };
+    if (duration > 0 && finalProgress >= 0 && finalProgress <= 100) {
+      const targetTime = (finalProgress / 100) * duration;
+      onSeek(targetTime);
+    }
+  }, [duration, onSeek]);
 
-  // 处理点击进度条
-  const handleClick = (e: React.MouseEvent) => {
+  // 处理点击进度条（仅在非拖动状态下）
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    if (isDragging || duration <= 0) return; // 如果正在拖动或视频未加载，忽略点击事件
     e.stopPropagation();
+    e.preventDefault();
     const newProgress = calculateProgress(e.clientX);
     setDragProgress(newProgress);
     const targetTime = (newProgress / 100) * duration;
     onSeek(targetTime);
-  };
+  }, [isDragging, calculateProgress, duration, onSeek]);
 
   // 鼠标事件
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     handleStart(e.clientX);
-  };
+  }, [handleStart]);
 
-  const handleMouseMove = (e: MouseEvent) => {
+  const handleMouseMoveCallback = useCallback((e: MouseEvent) => {
+    e.preventDefault();
     handleMove(e.clientX);
-  };
+  }, [handleMove]);
 
-  const handleMouseUp = () => {
+  const handleMouseUpCallback = useCallback(() => {
     handleEnd();
-  };
+  }, [handleEnd]);
 
   // 触摸事件
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     e.stopPropagation();
+    e.preventDefault();
     if (e.touches.length > 0) {
       handleStart(e.touches[0].clientX);
     }
-  };
+  }, [handleStart]);
 
-  const handleTouchMove = (e: TouchEvent) => {
+  const handleTouchMoveCallback = useCallback((e: TouchEvent) => {
+    e.preventDefault(); // 阻止页面滚动
     if (e.touches.length > 0) {
       handleMove(e.touches[0].clientX);
     }
-  };
+  }, [handleMove]);
 
-  const handleTouchEnd = () => {
+  const handleTouchEndCallback = useCallback(() => {
     handleEnd();
-  };
+  }, [handleEnd]);
 
-  // 添加全局事件监听器
+  // 添加全局事件监听器（优化：只在 isDragging 变化时重新绑定）
   useEffect(() => {
     if (isDragging) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.addEventListener('touchmove', handleTouchMove);
-      document.addEventListener('touchend', handleTouchEnd);
+      document.addEventListener('mousemove', handleMouseMoveCallback, { passive: false });
+      document.addEventListener('mouseup', handleMouseUpCallback);
+      document.addEventListener('touchmove', handleTouchMoveCallback, { passive: false });
+      document.addEventListener('touchend', handleTouchEndCallback);
 
       return () => {
-        document.removeEventListener('mousemove', handleMouseMove);
-        document.removeEventListener('mouseup', handleMouseUp);
-        document.removeEventListener('touchmove', handleTouchMove);
-        document.removeEventListener('touchend', handleTouchEnd);
+        document.removeEventListener('mousemove', handleMouseMoveCallback);
+        document.removeEventListener('mouseup', handleMouseUpCallback);
+        document.removeEventListener('touchmove', handleTouchMoveCallback);
+        document.removeEventListener('touchend', handleTouchEndCallback);
       };
     }
-  }, [isDragging, dragProgress]);
+  }, [isDragging, handleMouseMoveCallback, handleMouseUpCallback, handleTouchMoveCallback, handleTouchEndCallback]);
 
   const displayProgress = isDragging ? dragProgress : progress;
 
   return (
     <div
       ref={progressBarRef}
-      className={`relative h-1 bg-white/30 rounded-full overflow-visible cursor-pointer group ${className}`}
+      className={`relative h-2 bg-white/30 rounded-full overflow-visible cursor-pointer group ${className}`}
+      style={{ touchAction: 'none' }} // 阻止触摸默认行为
       onClick={handleClick}
       onMouseDown={handleMouseDown}
       onTouchStart={handleTouchStart}
@@ -898,7 +915,7 @@ export function ProgressBar({ progress, duration, onSeek, className = '' }: Prog
       
       {/* 拖动手柄 - 在拖动或hover时显示 */}
       <div
-        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg transition-opacity ${
+        className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg transition-opacity ${
           isDragging ? 'opacity-100 scale-125' : 'opacity-0 group-hover:opacity-100'
         }`}
         style={{ 

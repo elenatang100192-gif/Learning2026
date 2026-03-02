@@ -88,8 +88,8 @@ export const translations: Record<Language, Translations> = {
     
     // 分类
     tech: '科技',
-    arts: '艺术人文',
-    business: '商业业务',
+    arts: '文化',
+    business: '商业',
     
     // 登录页面
     loginTitle: 'NexusMind Short Video',

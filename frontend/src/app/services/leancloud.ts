@@ -178,6 +178,7 @@ export interface Video {
   uploadDate: string;
   publishDate?: string;
   displayOrder?: number; // 前端手机端展示顺序，数字越小越靠前
+  favoriteCreatedAt?: string; // 收藏时间（仅从收藏列表获取时存在）
   author?: User;
 }
 

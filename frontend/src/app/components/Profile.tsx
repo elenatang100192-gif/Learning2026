@@ -6,6 +6,7 @@ interface ProfileProps {
   user: { email: string; username?: string } | null;
   onLogout: () => void;
   onNavigateToPublications?: () => void;
+  onNavigateToFavorites?: () => void;
 }
 
 // 生成首字母头像的函数（和评论一样）
@@ -74,7 +75,28 @@ export function Profile({ user, onLogout, onNavigateToPublications, onNavigateTo
       // 获取用户统计数据
       const userStats = await userAPI.getUserStats();
       if (userStats) {
-        setStats(userStats);
+        // 根据当前语言模式计算收藏数量
+        let filteredFavoritesCount = 0;
+        try {
+          const favoriteVideos = await favoriteAPI.getUserFavorites(1, 100);
+          // 根据语言过滤收藏视频
+          filteredFavoritesCount = favoriteVideos.filter(video => {
+            if (language === 'zh') {
+              return video.videoUrl && video.videoUrl.trim() !== '' && video.title && video.title.trim() !== '';
+            } else {
+              return video.videoUrlEn && video.videoUrlEn.trim() !== '';
+            }
+          }).length;
+        } catch (error) {
+          console.error('获取收藏列表失败:', error);
+          // 如果获取失败，使用后端返回的总数
+          filteredFavoritesCount = userStats.favoritesCount;
+        }
+        
+        setStats({
+          ...userStats,
+          favoritesCount: filteredFavoritesCount
+        });
       }
     } catch (error) {
       console.error('加载用户数据失败:', error);
@@ -86,7 +108,7 @@ export function Profile({ user, onLogout, onNavigateToPublications, onNavigateTo
   // 获取用户信息和统计数据
   useEffect(() => {
     loadUserData();
-  }, [user]);
+  }, [user, language]); // 添加 language 依赖，切换语言时重新计算收藏数量
 
   // 监听收藏更新事件，刷新统计数据
   useEffect(() => {
@@ -98,7 +120,7 @@ export function Profile({ user, onLogout, onNavigateToPublications, onNavigateTo
     return () => {
       window.removeEventListener('favoriteUpdated', handleFavoriteUpdate);
     };
-  }, [user]);
+  }, [user, language]); // 添加 language 依赖，确保语言切换时也更新
 
   const displayUsername = userInfo?.username || user?.email?.split('@')[0] || (language === 'zh' ? '用户' : 'User');
   const displayEmail = userInfo?.email || user?.email || '';
@@ -112,7 +134,7 @@ export function Profile({ user, onLogout, onNavigateToPublications, onNavigateTo
   ];
 
   const menuItems = [
-    { icon: '📝', label: t.myPublications, count: stats.publishedCount, action: onNavigateToPublications },
+    { icon: '💾', label: language === 'zh' ? '收藏的视频' : 'Saved Videos', count: stats.favoritesCount, action: onNavigateToFavorites },
   ];
 
   return (
