@@ -79,14 +79,31 @@ export function Profile({ user, onLogout, onNavigateToPublications, onNavigateTo
         let filteredFavoritesCount = 0;
         try {
           const favoriteVideos = await favoriteAPI.getUserFavorites(1, 100);
+          console.log(`📊 当前语言: ${language}, 收藏视频总数: ${favoriteVideos.length}`);
+          
           // 根据语言过滤收藏视频
-          filteredFavoritesCount = favoriteVideos.filter(video => {
+          const filteredVideos = favoriteVideos.filter(video => {
             if (language === 'zh') {
-              return video.videoUrl && video.videoUrl.trim() !== '' && video.title && video.title.trim() !== '';
+              const hasVideoUrl = video.videoUrl && video.videoUrl.trim() !== '';
+              const hasTitle = video.title && video.title.trim() !== '';
+              return hasVideoUrl && hasTitle;
             } else {
-              return video.videoUrlEn && video.videoUrlEn.trim() !== '';
+              const hasVideoUrlEn = video.videoUrlEn && video.videoUrlEn.trim() !== '';
+              if (!hasVideoUrlEn) {
+                console.log(`⚠️ 视频 ${video.id} 没有 videoUrlEn:`, {
+                  id: video.id,
+                  title: video.title,
+                  titleEn: video.titleEn,
+                  videoUrl: video.videoUrl,
+                  videoUrlEn: video.videoUrlEn
+                });
+              }
+              return hasVideoUrlEn;
             }
-          }).length;
+          });
+          
+          filteredFavoritesCount = filteredVideos.length;
+          console.log(`✅ 过滤后的收藏数量: ${filteredFavoritesCount} (语言: ${language})`);
         } catch (error) {
           console.error('获取收藏列表失败:', error);
           // 如果获取失败，使用后端返回的总数

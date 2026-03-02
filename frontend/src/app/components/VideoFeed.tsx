@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { VideoCard, ProgressBar } from './VideoCard';
 import { VideoInteractions } from './VideoInteractions';
-import { NotificationBell } from './NotificationBell';
 import { videoAPI, categoryAPI, likeAPI, favoriteAPI, commentAPI, followAPI, type Video as LeanCloudVideo } from '../services/leancloud';
 import { useLanguage } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
@@ -588,11 +587,6 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
       {/* Fixed 定位的覆盖层元素 - 根据当前视频更新 */}
       {currentVideo && (
         <>
-          {/* 右上角通知铃铛 */}
-          <div className="fixed top-4 right-4 z-30 max-w-[480px]" style={{ right: 'calc((100vw - min(100vw, 480px)) / 2 + 16px)' }}>
-            <NotificationBell />
-          </div>
-
           {/* 右侧交互按钮 */}
           <div className="fixed right-4 bottom-52 z-20 max-w-[480px]" style={{ right: 'calc((100vw - min(100vw, 480px)) / 2 + 16px)' }}>
             <VideoInteractions 

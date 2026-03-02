@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { VideoFeed } from './VideoFeed';
-import { NotificationCenter } from './NotificationCenter';
 import { useLanguage } from '../contexts/LanguageContext';
 
 type Category = 'Tech' | 'Culture' | 'Business';
@@ -14,16 +13,12 @@ interface HomeProps {
 export function Home({ userEmail, playVideoId, onVideoPlayed }: HomeProps = {}) {
   const { t } = useLanguage();
   const [activeCategory, setActiveCategory] = useState<Category>('Tech');
-  const [showNotifications, setShowNotifications] = useState(false);
 
   const categories: { id: Category; label: string }[] = [
     { id: 'Tech', label: t.tech },
     { id: 'Culture', label: t.arts },
     { id: 'Business', label: t.business },
   ];
-
-  // 未读通知数量（从API获取，暂时设为0）
-  const unreadCount = 0;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative">
@@ -33,9 +28,9 @@ export function Home({ userEmail, playVideoId, onVideoPlayed }: HomeProps = {}) 
         <div className="absolute inset-0 bg-gradient-to-b from-black/95 via-black/90 to-black/60 backdrop-blur-sm" />
         {/* 底部渐变遮罩，确保与视频内容过渡自然 */}
         <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-b from-transparent to-black/40" />
-        <div className="relative flex items-center justify-between px-4 py-3 pointer-events-auto">
-          {/* 中间：分类导航 */}
-          <div className="flex items-center gap-3 sm:gap-4 flex-1 justify-center">
+        <div className="relative flex items-center justify-center px-4 py-3 pointer-events-auto">
+          {/* 分类导航 */}
+          <div className="flex items-center gap-3 sm:gap-4">
             {categories.map((category) => (
               <button
                 key={category.id}
@@ -53,21 +48,6 @@ export function Home({ userEmail, playVideoId, onVideoPlayed }: HomeProps = {}) 
               </button>
             ))}
           </div>
-
-          {/* 右侧：通知图标 */}
-          <button
-            onClick={() => setShowNotifications(true)}
-            className="relative w-10 h-10 flex items-center justify-center text-white hover:bg-white/10 rounded-full transition-colors ml-2 flex-shrink-0"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-            </svg>
-            {unreadCount > 0 && (
-              <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-medium">
-                {unreadCount}
-              </span>
-            )}
-          </button>
         </div>
       </div>
       
@@ -76,13 +56,6 @@ export function Home({ userEmail, playVideoId, onVideoPlayed }: HomeProps = {}) 
 
       {/* 视频内容区 */}
       <VideoFeed category={activeCategory} playVideoId={playVideoId} onVideoPlayed={onVideoPlayed} />
-
-      {/* 通知中心 */}
-      <NotificationCenter
-        isOpen={showNotifications}
-        onClose={() => setShowNotifications(false)}
-        userEmail={userEmail}
-      />
     </div>
   );
 }

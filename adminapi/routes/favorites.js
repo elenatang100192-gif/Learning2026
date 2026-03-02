@@ -214,6 +214,7 @@ router.get('/', [
         sortOrder: fav.category_sortOrder
       } : null,
       videoUrl: fav.videoUrl,
+      videoUrlEn: fav.videoUrlEn || null, // 添加英文视频URL字段
       coverUrl: fav.coverUrl,
       duration: fav.duration || 0,
       fileSize: fav.fileSize,
