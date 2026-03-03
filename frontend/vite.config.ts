@@ -30,8 +30,7 @@ export default defineConfig({
     minify: false,
   },
   // 移动端构建时使用根路径，Web部署时使用 /Video-frontend/
-  // 注意：CAPACITOR 环境变量需要在构建时设置
-  // 如果设置了 CAPACITOR 环境变量，使用根路径；否则使用 /Video-frontend/
-  base: (process.env.CAPACITOR === 'true' || process.env.CAPACITOR === '1' || process.env.CAPACITOR === 'TRUE' || process.env.VITE_CAPACITOR === 'true' || process.env.npm_config_capacitor === 'true') ? '/' : '/Video-frontend/',
+  // Capacitor iOS/Android 始终使用根路径
+  base: '/',
 })
 

@@ -43,9 +43,160 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
   const [videoDuration, setVideoDuration] = useState(0); // 当前视频的总时长（秒）
   const [currentVideoTime, setCurrentVideoTime] = useState(0); // 当前视频的播放时间（秒）
   const [isFollowing, setIsFollowing] = useState(false); // 当前视频的关注状态
-  const [hasUserInteracted, setHasUserInteracted] = useState(false); // 跟踪用户是否已交互
+  // 从 localStorage 恢复用户交互状态
+  const getHasUserInteracted = (): boolean => {
+    try {
+      const stored = localStorage.getItem('hasUserInteracted');
+      return stored === 'true';
+    } catch (error) {
+      console.error('读取用户交互状态失败:', error);
+      return false;
+    }
+  };
+  
+  // 保存用户交互状态到 localStorage
+  const saveHasUserInteracted = (value: boolean) => {
+    try {
+      localStorage.setItem('hasUserInteracted', String(value));
+    } catch (error) {
+      console.error('保存用户交互状态失败:', error);
+    }
+  };
+  
+  const [hasUserInteracted, setHasUserInteracted] = useState(getHasUserInteracted()); // 从 localStorage 恢复用户交互状态
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({}); // 存储视频元素引用
   const skipTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 用于延迟跳过，避免频繁触发
+  const lastScrollDirectionRef = useRef<'up' | 'down' | null>(null); // 记录最后一次滚动方向
+  const isRestoringPositionRef = useRef(false); // 标记是否正在恢复位置
+  
+  // 获取已完成的视频ID列表（从 localStorage）
+  const getCompletedVideoIds = (): Set<string> => {
+    try {
+      const stored = localStorage.getItem('completedVideoIds');
+      if (stored) {
+        return new Set(JSON.parse(stored));
+      }
+    } catch (error) {
+      console.error('读取已完成视频列表失败:', error);
+    }
+    return new Set<string>();
+  };
+  
+  // 保存当前视频索引到 localStorage（按分类保存）
+  const saveCurrentVideoIndex = (index: number) => {
+    try {
+      const key = `lastVideoIndex_${category}`;
+      localStorage.setItem(key, JSON.stringify(index));
+    } catch (error) {
+      console.error('保存视频索引失败:', error);
+    }
+  };
+  
+  // 保存当前视频的播放时间点（按分类保存）
+  const saveCurrentVideoTime = (time: number) => {
+    try {
+      const key = `lastVideoTime_${category}`;
+      localStorage.setItem(key, JSON.stringify(time));
+    } catch (error) {
+      console.error('保存视频播放时间失败:', error);
+    }
+  };
+  
+  // 获取上次离开时的视频播放时间点（按分类获取）
+  const getLastVideoTime = (): number | null => {
+    try {
+      const key = `lastVideoTime_${category}`;
+      const stored = localStorage.getItem(key);
+      if (stored !== null) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('读取视频播放时间失败:', error);
+    }
+    return null;
+  };
+  
+  // 获取上次离开时的视频索引（按分类获取）
+  const getLastVideoIndex = (): number | null => {
+    try {
+      const key = `lastVideoIndex_${category}`;
+      const stored = localStorage.getItem(key);
+      if (stored !== null) {
+        return JSON.parse(stored);
+      }
+    } catch (error) {
+      console.error('读取视频索引失败:', error);
+    }
+    return null;
+  };
+  
+  // 标记视频为已完成
+  const markVideoAsCompleted = (videoId: string) => {
+    try {
+      const completedIds = getCompletedVideoIds();
+      completedIds.add(videoId);
+      localStorage.setItem('completedVideoIds', JSON.stringify(Array.from(completedIds)));
+    } catch (error) {
+      console.error('保存已完成视频列表失败:', error);
+    }
+  };
+  
+  // 取消标记视频为已完成（将视频标记为未完成）
+  const unmarkVideoAsCompleted = (videoId: string) => {
+    try {
+      const completedIds = getCompletedVideoIds();
+      completedIds.delete(videoId);
+      localStorage.setItem('completedVideoIds', JSON.stringify(Array.from(completedIds)));
+    } catch (error) {
+      console.error('取消已完成视频标记失败:', error);
+    }
+  };
+  
+  // 暂停所有视频
+  const pauseAllVideos = useCallback(() => {
+    if (!containerRef.current) return;
+    const allVideos = containerRef.current.querySelectorAll('video');
+    allVideos.forEach((video) => {
+      const videoElement = video as HTMLVideoElement;
+      if (!videoElement.paused) {
+        videoElement.pause();
+      }
+      // 静音所有视频，避免音频残留
+      videoElement.muted = true;
+    });
+  }, []);
+  
+  // 暂停除指定索引外的所有视频
+  const pauseAllVideosExcept = useCallback((activeIndex: number) => {
+    if (!containerRef.current) return;
+    const allVideos = containerRef.current.querySelectorAll('video');
+    allVideos.forEach((video, index) => {
+      const videoElement = video as HTMLVideoElement;
+      // 找到视频所在的容器索引
+      const videoContainer = video.closest('.h-screen');
+      if (videoContainer && containerRef.current) {
+        const containerIndex = Array.from(containerRef.current.querySelectorAll('.h-screen')).indexOf(videoContainer as Element);
+        // 如果不是激活的视频，暂停它并静音
+        if (containerIndex !== activeIndex) {
+          if (!videoElement.paused) {
+            videoElement.pause();
+          }
+          videoElement.muted = true;
+        }
+      } else {
+        // 如果找不到容器，也暂停并静音（安全措施）
+        if (!videoElement.paused) {
+          videoElement.pause();
+        }
+        videoElement.muted = true;
+      }
+    });
+  }, []);
+  
+  // 检查视频是否已完成
+  const isVideoCompleted = (videoId: string): boolean => {
+    return getCompletedVideoIds().has(videoId);
+  };
 
   // 当 currentIndex 变化时，更新关注状态和进度
   useEffect(() => {
@@ -287,6 +438,7 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
               const targetIndex = finalVideos.findIndex(v => v.id === playVideoId);
               if (targetIndex >= 0) {
                 setCurrentIndex(targetIndex);
+                saveCurrentVideoIndex(targetIndex);
                 // 滚动到目标视频
                 if (containerRef.current) {
                   const targetElement = containerRef.current.children[targetIndex] as HTMLElement;
@@ -294,26 +446,141 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
                     targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
                   }
                 }
+                
+                // 滚动后恢复播放时间点
+                setTimeout(() => {
+                  const lastTime = getLastVideoTime();
+                  const targetContainer = containerRef.current?.children[targetIndex];
+                  const targetVideoElement = targetContainer?.querySelector('video') as HTMLVideoElement;
+                  if (targetVideoElement && lastTime && lastTime > 0 && lastTime < (targetVideoElement.duration || Infinity)) {
+                    targetVideoElement.currentTime = lastTime;
+                    if (hasUserInteracted) {
+                      targetVideoElement.muted = false;
+                    }
+                    targetVideoElement.play().catch((error) => {
+                      console.error('恢复播放时间点失败:', error);
+                    });
+                  }
+                }, 100);
+                
                 // 通知视频已播放
                 if (onVideoPlayed) {
                   setTimeout(() => onVideoPlayed(), 500);
                 }
               } else {
-                setCurrentIndex(0);
+                // 如果没有找到指定视频，尝试恢复上次离开的位置
+                const lastIndex = getLastVideoIndex();
+                let targetIndex: number;
+                
+                if (lastIndex !== null && lastIndex >= 0 && lastIndex < finalVideos.length) {
+                  // 恢复上次离开的位置
+                  targetIndex = lastIndex;
+                } else {
+                  // 找到第一个未完成的视频
+                  const firstUncompletedIndex = finalVideos.findIndex(v => !isVideoCompleted(v.id));
+                  targetIndex = firstUncompletedIndex >= 0 ? firstUncompletedIndex : 0;
+                }
+                
+                setCurrentIndex(targetIndex);
+                saveCurrentVideoIndex(targetIndex);
+                
                 if (containerRef.current) {
-                  containerRef.current.scrollTo({
-                    top: 0,
-                    behavior: 'instant',
-                  });
+                  // 直接定位，无延迟、无动画
+                  const targetElement = containerRef.current.children[targetIndex] as HTMLElement;
+                  if (targetElement) {
+                    targetElement.scrollIntoView({ behavior: 'instant', block: 'start' });
+                  } else {
+                    containerRef.current.scrollTo({
+                      top: targetIndex * window.innerHeight,
+                      behavior: 'instant',
+                    });
+                  }
                 }
               }
             } else {
-              setCurrentIndex(0);
-              // 确保滚动到顶部（使用 instant 避免滚动动画导致的黑屏）
+              // 尝试恢复上次离开的位置
+              const lastIndex = getLastVideoIndex();
+              let targetIndex: number;
+              
+              if (lastIndex !== null && lastIndex >= 0 && lastIndex < finalVideos.length) {
+                // 恢复上次离开的位置（无延迟、无动画）
+                targetIndex = lastIndex;
+              } else {
+                // 找到第一个未完成的视频
+                const firstUncompletedIndex = finalVideos.findIndex(v => !isVideoCompleted(v.id));
+                targetIndex = firstUncompletedIndex >= 0 ? firstUncompletedIndex : 0;
+              }
+              
+              // 标记正在恢复位置
+              isRestoringPositionRef.current = true;
+              
+              // 先暂停所有视频，确保不会有音频冲突
+              pauseAllVideos();
+              
+              // 设置目标索引
+              setCurrentIndex(targetIndex);
+              saveCurrentVideoIndex(targetIndex);
+              
+              // 直接滚动到目标视频，无延迟、无动画
               if (containerRef.current) {
-                containerRef.current.scrollTo({
-                  top: 0,
-                  behavior: 'instant', // 使用 instant 避免滚动过程中的黑屏
+                // 使用 requestAnimationFrame 确保 DOM 已渲染
+                requestAnimationFrame(() => {
+                  if (containerRef.current) {
+                    const targetElement = containerRef.current.children[targetIndex] as HTMLElement;
+                    if (targetElement) {
+                      // 直接定位，无动画，无延迟
+                      targetElement.scrollIntoView({ behavior: 'instant', block: 'start' });
+                    } else {
+                      // 如果元素不存在，使用 scrollTo
+                      containerRef.current.scrollTo({
+                        top: targetIndex * window.innerHeight,
+                        behavior: 'instant',
+                      });
+                    }
+                    
+                    // 确保只有目标视频被激活，并自动播放
+                    setTimeout(() => {
+                      // 先暂停所有视频
+                      pauseAllVideos();
+                      // 强制激活目标视频（通过确保currentIndex正确）
+                      setCurrentIndex(targetIndex);
+                      
+                      // 等待DOM更新后，确保只有目标视频播放
+                      requestAnimationFrame(() => {
+                        // 暂停除目标视频外的所有视频
+                        pauseAllVideosExcept(targetIndex);
+                        
+                        // 获取上次离开时的播放时间点
+                        const lastTime = getLastVideoTime();
+                        
+                        // 确保目标视频播放
+                        const targetContainer = containerRef.current?.children[targetIndex];
+                        const targetVideoElement = targetContainer?.querySelector('video') as HTMLVideoElement;
+                        if (targetVideoElement && targetVideoElement.paused) {
+                          // 如果用户已交互过，取消静音
+                          if (hasUserInteracted) {
+                            targetVideoElement.muted = false;
+                          }
+                          
+                          // 如果有保存的播放时间点，恢复到该时间点
+                          if (lastTime && lastTime > 0 && lastTime < (targetVideoElement.duration || Infinity)) {
+                            targetVideoElement.currentTime = lastTime;
+                          }
+                          
+                          targetVideoElement.play().catch((error) => {
+                            console.error('恢复位置后自动播放失败:', error);
+                          });
+                        }
+                        
+                        // 延迟一点后取消恢复位置标记，允许正常播放
+                        setTimeout(() => {
+                          isRestoringPositionRef.current = false;
+                          // 最后再次确保只有目标视频播放
+                          pauseAllVideosExcept(targetIndex);
+                        }, 50);
+                      });
+                    }, 50);
+                  }
                 });
               }
             }
@@ -330,109 +597,168 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
     loadVideos();
   }, [category, language]); // 添加language依赖，切换语言时重新加载并过滤视频
 
-  // 监听滚动事件，更新当前视频索引（优化：使用 Intersection Observer 精确检测）
+  /**
+   * 处理视频切换的核心函数
+   * - 保证永远只有一个视频在播放
+   * - 在用户已经发生过一次交互后，自动打开后续视频的声音
+   */
+  const switchToVideo = useCallback(
+    (newIndex: number) => {
+      if (!containerRef.current || newIndex < 0 || newIndex >= videos.length) return;
+
+      const allVideos = containerRef.current.querySelectorAll('video');
+
+      // 1. 先立即暂停所有视频，避免音频错位
+      allVideos.forEach((video) => {
+        const videoElement = video as HTMLVideoElement;
+        if (!videoElement.paused) {
+          videoElement.pause();
+        }
+        // 如果用户已经交互过，保持不静音；否则静音（以便自动播放）
+        if (!hasUserInteracted) {
+          videoElement.muted = true;
+        }
+      });
+
+      // 2. 更新当前索引
+      if (newIndex !== currentIndex) {
+        // 保存当前视频的播放时间点
+        if (containerRef.current) {
+          const currentContainer = containerRef.current.children[currentIndex];
+          const currentVideoElement = currentContainer?.querySelector('video') as HTMLVideoElement;
+          if (currentVideoElement && currentVideoElement.currentTime > 0) {
+            saveCurrentVideoTime(currentVideoElement.currentTime);
+          }
+        }
+        
+        setCurrentIndex(newIndex);
+        saveCurrentVideoIndex(newIndex);
+      }
+
+      // 3. 确保新视频播放（并在用户已交互时自动开声）
+      requestAnimationFrame(() => {
+        const targetContainer = containerRef.current?.children[newIndex];
+        const targetVideoElement = targetContainer?.querySelector('video') as HTMLVideoElement | null;
+
+        if (!targetVideoElement) return;
+
+        // 如果用户已经有过交互（滚动/点击），可以自动开声音
+        if (hasUserInteracted) {
+          targetVideoElement.muted = false;
+        }
+
+        const playWithFallback = () => {
+          targetVideoElement
+            .play()
+            .then(() => {
+              console.log(`✅ 自动播放成功，索引: ${newIndex}`);
+            })
+            .catch((error) => {
+              console.error('自动播放失败:', error);
+            });
+        };
+
+        if (targetVideoElement.readyState >= 2) {
+          // 已有足够数据，直接播放
+          playWithFallback();
+        } else {
+          // 还在加载，等 canplay 再播
+          targetVideoElement.addEventListener(
+            'canplay',
+            () => {
+              if (hasUserInteracted) {
+                targetVideoElement.muted = false;
+              }
+              playWithFallback();
+            },
+            { once: true }
+          );
+
+          if (targetVideoElement.readyState === 0) {
+            targetVideoElement.load();
+          }
+        }
+      });
+    },
+    [currentIndex, hasUserInteracted, videos.length]
+  );
+
+  /**
+   * 监听滚动 / 视口变化，切换当前激活视频
+   * - 优先使用 IntersectionObserver 精确判断哪个视频在屏幕中央
+   * - 同时保留 scroll 作为兜底方案
+   */
   useEffect(() => {
     const container = containerRef.current;
     if (!container || videos.length === 0) return;
 
-    // 使用 Intersection Observer 精确检测哪个视频在视口中
     const videoContainers = container.querySelectorAll('.h-screen');
     const observers: IntersectionObserver[] = [];
-    
+
+    // 使用 IntersectionObserver 精确检测哪个视频在视口中心
     videoContainers.forEach((videoContainer, index) => {
       const observer = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
-            // 如果视频容器在视口中且可见度超过 50%
-            if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
+            // 降低阈值到 0.3，让切换更容易触发，同时添加防抖避免快速滑动时的冲突
+            if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
               const newIndex = index;
-              console.log(`📹 检测到视频索引变化: ${newIndex}, 视频标题: ${videos[newIndex]?.title || '未知'}`);
-              
-              // 标记用户已交互（滚动）
+              console.log(
+                `📹 IntersectionObserver 检测到视频索引变化: ${newIndex}, 标题: ${
+                  videos[newIndex]?.title || '未知'
+                }`
+              );
+
+              // 记录用户已交互（滚动也算一次交互）
               if (!hasUserInteracted) {
                 setHasUserInteracted(true);
+                saveHasUserInteracted(true);
               }
-              
-              // 如果索引变化，立即更新
-              if (newIndex !== currentIndex && newIndex >= 0 && newIndex < videos.length) {
-                // 如果是向下滚动（newIndex > currentIndex），检查当前视频是否已播放完成
-                const isVideoFinished = videoDuration > 0 && currentVideoTime >= videoDuration - 0.5; // 留0.5秒容差
-                if (newIndex > currentIndex && isVideoFinished) {
-                  // 如果视频已播放完成，自动跳过到下一个视频
-                  // 清除之前的跳过定时器
-                  if (skipTimeoutRef.current) {
-                    clearTimeout(skipTimeoutRef.current);
-                  }
-                  
-                  // 延迟跳过，确保滚动动画完成
-                  skipTimeoutRef.current = setTimeout(() => {
-                    if (newIndex < videos.length - 1) {
-                      // 继续滚动到下一个视频
-                      const nextIndex = newIndex + 1;
-                      const nextElement = container.children[nextIndex] as HTMLElement;
-                      if (nextElement) {
-                        nextElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        console.log(`⏭️ 自动跳过已完成的视频: ${nextIndex}, 视频标题: ${videos[nextIndex]?.title || '未知'}`);
-                        setCurrentIndex(nextIndex);
-                      }
-                    } else {
-                      // 已经是最后一个视频，正常切换
-                      setCurrentIndex(newIndex);
-                    }
-                  }, 300);
-                } else {
-                  // 正常切换视频
-                  setCurrentIndex(newIndex);
-                }
-                
-                // 强制暂停所有非激活的视频
-                const allVideos = container.querySelectorAll('video');
-                allVideos.forEach((video) => {
-                  const videoElement = video as HTMLVideoElement;
-                  const videoContainerElement = video.closest('.h-screen');
-                  const videoIndex = Array.from(videoContainers).indexOf(videoContainerElement as Element);
-                  
-                  // 只有当前索引的视频可以播放，其他都暂停
-                  if (videoIndex !== newIndex) {
-                    if (!videoElement.paused) {
-                      videoElement.pause();
-                    }
-                  }
-                });
+
+              if (newIndex === currentIndex || newIndex < 0 || newIndex >= videos.length) {
+                return;
               }
+
+              // 更新滚动方向
+              if (newIndex > currentIndex) {
+                lastScrollDirectionRef.current = 'down';
+              } else if (newIndex < currentIndex) {
+                lastScrollDirectionRef.current = 'up';
+              }
+
+              // 移除跳过已完成视频的逻辑，让用户可以自由滑动查看任何视频
+              // 正常切换到目标视频
+              switchToVideo(newIndex);
             }
           });
         },
         {
-          threshold: [0.5], // 当视频容器 50% 以上可见时触发
+          threshold: [0.3, 0.5, 0.7], // 使用多个阈值，更平滑地检测
           rootMargin: '0px',
         }
       );
-      
+
       observer.observe(videoContainer);
       observers.push(observer);
     });
-    
-    // 备用方案：使用滚动事件（如果 Intersection Observer 不可用）
+
+    // 兜底 scroll 方案（某些低端机/旧浏览器 IntersectionObserver 可能表现不好）
     let scrollTimeout: NodeJS.Timeout;
     const handleScroll = () => {
-      // 标记用户已交互（滚动）
       if (!hasUserInteracted) {
         setHasUserInteracted(true);
+        saveHasUserInteracted(true);
       }
-      
-      // 清除之前的定时器
+
       clearTimeout(scrollTimeout);
-      
-      // 延迟计算，等待滚动稳定
+
       scrollTimeout = setTimeout(() => {
         const scrollTop = container.scrollTop;
         const windowHeight = window.innerHeight;
-        
-        // 更精确的计算：找到最接近视口中心的视频
+
         let closestIndex = 0;
         let minDistance = Infinity;
-        
+
         videoContainers.forEach((videoContainer, index) => {
           const rect = videoContainer.getBoundingClientRect();
           const containerTop = rect.top + container.scrollTop;
@@ -444,55 +770,39 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
             closestIndex = index;
           }
         });
-        
-        if (closestIndex !== currentIndex && closestIndex >= 0 && closestIndex < videos.length) {
-          // 如果是向下滚动（closestIndex > currentIndex），检查当前视频是否已播放完成
-          const isVideoFinished = videoDuration > 0 && currentVideoTime >= videoDuration - 0.5; // 留0.5秒容差
-          if (closestIndex > currentIndex && isVideoFinished) {
-            // 如果视频已播放完成，自动跳过到下一个视频
-            // 清除之前的跳过定时器
-            if (skipTimeoutRef.current) {
-              clearTimeout(skipTimeoutRef.current);
-            }
-            
-            // 延迟跳过，确保滚动动画完成
-            skipTimeoutRef.current = setTimeout(() => {
-              if (closestIndex < videos.length - 1) {
-                // 继续滚动到下一个视频
-                const nextIndex = closestIndex + 1;
-                const nextElement = container.children[nextIndex] as HTMLElement;
-                if (nextElement) {
-                  nextElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  console.log(`⏭️ 自动跳过已完成的视频: ${nextIndex}, 视频标题: ${videos[nextIndex]?.title || '未知'}`);
-                  setCurrentIndex(nextIndex);
-                }
-              } else {
-                // 已经是最后一个视频，正常切换
-                console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
-                setCurrentIndex(closestIndex);
-              }
-            }, 300);
-          } else {
-            // 正常切换视频
-            console.log(`📹 滚动检测到视频索引变化: ${closestIndex}, 视频标题: ${videos[closestIndex]?.title || '未知'}`);
-            setCurrentIndex(closestIndex);
-          }
+
+        if (closestIndex === currentIndex || closestIndex < 0 || closestIndex >= videos.length) {
+          return;
         }
+
+        if (closestIndex > currentIndex) {
+          lastScrollDirectionRef.current = 'down';
+        } else if (closestIndex < currentIndex) {
+          lastScrollDirectionRef.current = 'up';
+        }
+
+        // 移除跳过已完成视频的逻辑，让用户可以自由滑动查看任何视频
+
+        console.log(
+          `📹 scroll 兜底检测到视频索引变化: ${closestIndex}, 标题: ${
+            videos[closestIndex]?.title || '未知'
+          }`
+        );
+        switchToVideo(closestIndex);
       }, 100);
-  };
+    };
 
     container.addEventListener('scroll', handleScroll, { passive: true });
-    
+
     return () => {
-      // 清理所有 observers
-      observers.forEach(observer => observer.disconnect());
+      observers.forEach((observer) => observer.disconnect());
       container.removeEventListener('scroll', handleScroll);
       clearTimeout(scrollTimeout);
       if (skipTimeoutRef.current) {
         clearTimeout(skipTimeoutRef.current);
       }
     };
-  }, [currentIndex, videos.length, hasUserInteracted, videos, currentVideoTime, videoDuration]);
+  }, [videos, currentIndex, hasUserInteracted, switchToVideo]);
 
   // 切换分类时重置索引和滚动位置（优化：避免黑屏）
   // 注意：这个逻辑已经在 loadVideos 中处理，这里移除避免重复执行
@@ -551,6 +861,81 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
     }
   }, [currentVideo, videoDuration]);
 
+  // 处理视频播放完成，自动跳到下一个视频
+  const handleVideoEnded = useCallback(() => {
+    if (!currentVideo) return;
+    
+    // 标记当前视频为已完成
+    markVideoAsCompleted(currentVideo.id);
+    
+    // 找到下一个未完成的视频
+    const nextUncompletedIndex = videos.findIndex((v, idx) => idx > currentIndex && !isVideoCompleted(v.id));
+    
+    if (nextUncompletedIndex >= 0) {
+      // 有下一个未完成的视频，直接定位，无延迟无动画
+      setCurrentIndex(nextUncompletedIndex);
+      saveCurrentVideoIndex(nextUncompletedIndex);
+      
+      // 使用 instant 滚动，直接定位，无跳转感觉
+      requestAnimationFrame(() => {
+        if (containerRef.current) {
+          const nextElement = containerRef.current.children[nextUncompletedIndex] as HTMLElement;
+          if (nextElement) {
+            // 直接定位，无动画
+            nextElement.scrollIntoView({ behavior: 'instant', block: 'start' });
+          }
+        }
+      });
+    } else {
+      // 没有下一个未完成的视频，提示用户
+      toast.success(language === 'zh' ? '所有视频已播放完成' : 'All videos completed');
+    }
+  }, [currentVideo, currentIndex, videos, language]);
+
+  // 向上滑动时，如果播放超过5秒，将视频标记为未完成
+  useEffect(() => {
+    if (videos.length > 0 && currentIndex >= 0 && currentIndex < videos.length) {
+      const currentVideo = videos[currentIndex];
+      // 如果是向上滑动，且视频当前已完成，且播放时间超过5秒，则取消完成标记
+      if (lastScrollDirectionRef.current === 'up' && isVideoCompleted(currentVideo.id) && currentVideoTime > 5) {
+        console.log(`🔄 向上滑动播放超过5秒，取消完成标记: ${currentVideo.title}`);
+        unmarkVideoAsCompleted(currentVideo.id);
+      }
+    }
+  }, [currentIndex, currentVideoTime, videos, lastScrollDirectionRef]);
+
+  // 检查当前视频是否已完成，如果已完成则自动跳过（仅在向下滚动时）
+  // 修复：移除这个过于激进的跳过逻辑，让用户可以自由滑动查看任何视频
+  /*
+  useEffect(() => {
+    if (videos.length > 0 && currentIndex >= 0 && currentIndex < videos.length) {
+      const currentVideo = videos[currentIndex];
+      // 只在向下滚动时检查并跳过已完成的视频，向上滑动时允许播放已完成的视频
+      if (isVideoCompleted(currentVideo.id) && lastScrollDirectionRef.current !== 'up') {
+        // 当前视频已完成，直接定位到第一个未完成的视频，无延迟无动画
+        const nextUncompletedIndex = videos.findIndex((v, idx) => idx > currentIndex && !isVideoCompleted(v.id));
+        if (nextUncompletedIndex >= 0) {
+          // 直接定位，无延迟无动画
+          setCurrentIndex(nextUncompletedIndex);
+          saveCurrentVideoIndex(nextUncompletedIndex);
+          
+          // 使用 instant 滚动，直接定位，无跳转感觉
+          requestAnimationFrame(() => {
+            if (containerRef.current) {
+              const nextElement = containerRef.current.children[nextUncompletedIndex] as HTMLElement;
+              if (nextElement) {
+                // 直接定位，无动画
+                nextElement.scrollIntoView({ behavior: 'instant', block: 'start' });
+              }
+            }
+          });
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIndex, videos.length]); // 只依赖 videos.length，避免频繁检查
+  */
+
   return (
     <>
     <div
@@ -578,6 +963,7 @@ export function VideoFeed({ category, showFollowButton = false, playVideoId, onV
             onTimeUpdate={index === currentIndex ? setCurrentVideoTime : undefined}
             onSeek={index === currentIndex ? handleSeek : undefined}
             onDurationUpdate={index === currentIndex ? setVideoDuration : undefined}
+            onVideoEnded={index === currentIndex ? handleVideoEnded : undefined}
             hasUserInteracted={hasUserInteracted}
           />
         </div>

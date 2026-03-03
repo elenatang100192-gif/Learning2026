@@ -31,10 +31,11 @@ interface VideoCardProps {
   onTimeUpdate?: (time: number) => void; // 播放时间更新回调，传递当前播放时间（秒）
   onSeek?: (time: number) => void; // 拖动进度条回调，传递目标时间（秒）
   onDurationUpdate?: (duration: number) => void; // 视频时长更新回调
+  onVideoEnded?: () => void; // 视频播放完成回调
   hasUserInteracted?: boolean; // 用户是否已交互（用于决定是否可以自动播放声音）
 }
 
-export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, onTimeUpdate, onSeek, onDurationUpdate, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
+export function VideoCard({ video, isActive, showFollowButton = false, onProgressUpdate, onTimeUpdate, onSeek, onDurationUpdate, onVideoEnded, hasUserInteracted: parentHasUserInteracted = false }: VideoCardProps) {
   const { t, language } = useLanguage();
   const [isPlaying, setIsPlaying] = useState(false);
   const [showControls, setShowControls] = useState(false); // 初始不显示播放按钮，登录后自动播放
@@ -121,8 +122,9 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
 
   // 当用户交互状态变化时，更新静音状态
   useEffect(() => {
-    if (parentHasUserInteracted && !hasUserInteracted) {
+    if (parentHasUserInteracted) {
       setHasUserInteracted(true);
+      // 如果视频是激活状态，立即取消静音
       if (videoRef.current && isActive) {
         videoRef.current.muted = false;
         setIsMuted(false);
@@ -135,10 +137,23 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
     if (!videoRef.current) return;
 
     if (isActive) {
-      // 如果用户已经交互过，取消静音并播放
-      if (hasUserInteracted) {
+      // 确保视频元素确实属于当前激活的视频
+      if (videoRef.current.getAttribute('data-video-id') !== video.id) {
+        // 如果视频ID不匹配，说明可能是错误的视频，先暂停
+        if (!videoRef.current.paused) {
+          videoRef.current.pause();
+          setIsPlaying(false);
+        }
+        return;
+      }
+      // 如果用户已经交互过（包括父组件传递的状态），取消静音并播放
+      if (hasUserInteracted || parentHasUserInteracted) {
         videoRef.current.muted = false;
         setIsMuted(false);
+        // 同步本地状态
+        if (!hasUserInteracted && parentHasUserInteracted) {
+          setHasUserInteracted(true);
+        }
       } else {
         // 首次加载时保持静音以支持自动播放
         videoRef.current.muted = true;
@@ -283,7 +298,7 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
       setIsPlaying(false);
     }
     }
-  }, [isActive, hasUserInteracted]);
+  }, [isActive, hasUserInteracted, parentHasUserInteracted, currentVideoUrl]);
 
   // 处理播放/暂停切换
   const togglePlay = () => {
@@ -375,12 +390,10 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
   // 视频结束时循环播放（只有激活的视频才循环）
   const handleVideoEnd = () => {
     if (videoRef.current && isActive && isPlaying) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.muted = true; // iOS 需要 muted 才能播放
-      videoRef.current.play().catch((error) => {
-        console.error('循环播放失败:', error);
-        console.error('视频 URL:', currentVideoUrl);
-      });
+      // 视频播放完成，通知父组件
+      if (onVideoEnded) {
+        onVideoEnded();
+      }
     }
   };
 
@@ -487,6 +500,8 @@ export function VideoCard({ video, isActive, showFollowButton = false, onProgres
           poster={video.thumbnail}
           loop={false}
           playsInline
+          webkit-playsinline="true"
+          x5-playsinline="true"
           muted={isMuted}
           preload="auto"
           onTimeUpdate={handleTimeUpdate}
